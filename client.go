@@ -28,6 +28,7 @@ import (
 	"github.com/hashicorp/go-hclog"
 	"github.com/hashicorp/go-plugin/internal/cmdrunner"
 	"github.com/hashicorp/go-plugin/runner"
+	"github.com/hashicorp/yamux"
 	"google.golang.org/grpc"
 )
 
@@ -102,6 +103,7 @@ type Client struct {
 	processKilled bool
 
 	unixSocketCfg UnixSocketConfig
+	session       *yamux.Session
 }
 
 // NegotiatedVersion returns the protocol version negotiated with the server.
@@ -1071,6 +1073,16 @@ func (c *Client) dialer(_ string, timeout time.Duration) (net.Conn, error) {
 	if c.protocol == ProtocolNetRPC && c.config.TLSConfig != nil {
 		conn = tls.Client(conn, c.config.TLSConfig)
 	}
+
+	// c.session, err = yamux.Client(conn, nil)
+	// if err != nil {
+	// 	return nil, err
+	// }
+
+	// conn, err = c.session.Open()
+	// if err != nil {
+	// 	return nil, err
+	// }
 
 	return conn, nil
 }

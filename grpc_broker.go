@@ -271,6 +271,8 @@ type GRPCBroker struct {
 	unixSocketCfg  UnixSocketConfig
 	addrTranslator runner.AddrTranslator
 
+	muxer *grpcMuxer
+
 	sync.Mutex
 }
 
@@ -279,7 +281,7 @@ type gRPCBrokerPending struct {
 	doneCh chan struct{}
 }
 
-func newGRPCBroker(s streamer, tls *tls.Config, unixSocketCfg UnixSocketConfig, addrTranslator runner.AddrTranslator) *GRPCBroker {
+func newGRPCBroker(s streamer, tls *tls.Config, unixSocketCfg UnixSocketConfig, addrTranslator runner.AddrTranslator, muxer *grpcMuxer) *GRPCBroker {
 	return &GRPCBroker{
 		streamer: s,
 		streams:  make(map[uint32]*gRPCBrokerPending),
@@ -288,6 +290,7 @@ func newGRPCBroker(s streamer, tls *tls.Config, unixSocketCfg UnixSocketConfig, 
 
 		unixSocketCfg:  unixSocketCfg,
 		addrTranslator: addrTranslator,
+		muxer:          muxer,
 	}
 }
 
@@ -327,46 +330,44 @@ func (b *GRPCBroker) Accept(id uint32) (net.Listener, error) {
 // connection is opened every call, these calls should be used sparingly.
 // Multiple gRPC server implementations can be registered to a single
 // AcceptAndServe call.
-func (b *GRPCBroker) AcceptAndServe(id uint32, s func([]grpc.ServerOption) *grpc.Server) {
-	listener, err := b.Accept(id)
-	if err != nil {
-		log.Printf("[ERR] plugin: plugin acceptAndServe error: %s", err)
+func (b *GRPCBroker) AcceptAndServe(id uint32, newGRPCServer func([]grpc.ServerOption) *grpc.Server) {
+	if err := b.streamer.Send(&plugin.ConnInfo{
+		ServiceId: id,
+	}); err != nil {
+		log.Printf("[ERR] plugin: plugin AcceptAndServeMux streamer error: %s", err)
 		return
 	}
-	defer listener.Close()
 
 	var opts []grpc.ServerOption
 	if b.tls != nil {
 		opts = []grpc.ServerOption{grpc.Creds(credentials.NewTLS(b.tls))}
 	}
 
-	server := s(opts)
+	server := newGRPCServer(opts)
 
 	// Here we use a run group to close this goroutine if the server is shutdown
 	// or the broker is shutdown.
 	var g run.Group
-	{
-		// Serve on the listener, if shutting down call GracefulStop.
-		g.Add(func() error {
-			return server.Serve(listener)
-		}, func(err error) {
-			server.GracefulStop()
-		})
-	}
-	{
-		// block on the closeCh or the doneCh. If we are shutting down close the
-		// closeCh.
-		closeCh := make(chan struct{})
-		g.Add(func() error {
-			select {
-			case <-b.doneCh:
-			case <-closeCh:
-			}
-			return nil
-		}, func(err error) {
-			close(closeCh)
-		})
-	}
+
+	// Serve on the listener, if shutting down call GracefulStop.
+	g.Add(func() error {
+		return server.Serve(b.muxer)
+	}, func(err error) {
+		server.GracefulStop()
+	})
+
+	// block on the closeCh or the doneCh. If we are shutting down close the
+	// closeCh.
+	closeCh := make(chan struct{})
+	g.Add(func() error {
+		select {
+		case <-b.doneCh:
+		case <-closeCh:
+		}
+		return nil
+	}, func(err error) {
+		close(closeCh)
+	})
 
 	// Block until we are done
 	g.Run()
@@ -392,6 +393,18 @@ func (b *GRPCBroker) Dial(id uint32) (conn *grpc.ClientConn, err error) {
 		close(p.doneCh)
 	case <-time.After(5 * time.Second):
 		return nil, fmt.Errorf("timeout waiting for connection info")
+	}
+
+	if c.Network == "" && c.Address == "" {
+		// Muxed connection.
+		return dialGRPCConn(b.tls, func(string, time.Duration) (net.Conn, error) {
+			conn, err := b.muxer.session.Open()
+			if err != nil {
+				return nil, fmt.Errorf("error opening muxed connection: %w", err)
+			}
+
+			return conn, nil
+		})
 	}
 
 	network, address := c.Network, c.Address

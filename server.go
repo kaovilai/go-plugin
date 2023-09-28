@@ -375,7 +375,7 @@ func Serve(opts *ServeConfig) {
 		// If we have a TLS configuration then we wrap the listener
 		// ourselves and do it at that level.
 		if tlsConfig != nil {
-			listener = tls.NewListener(listener, tlsConfig)
+			listener.configureTLS(tlsConfig)
 		}
 
 		// Create the RPC server to dispense
@@ -396,6 +396,7 @@ func Serve(opts *ServeConfig) {
 			Stderr:  stderr_r,
 			DoneCh:  doneCh,
 			logger:  logger,
+			muxer:   listener,
 		}
 
 	default:
@@ -503,12 +504,19 @@ func Serve(opts *ServeConfig) {
 	}
 }
 
-func serverListener(unixSocketCfg UnixSocketConfig) (net.Listener, error) {
-	if runtime.GOOS == "windows" {
-		return serverListener_tcp()
+func serverListener(unixSocketCfg UnixSocketConfig) (*grpcMuxer, error) {
+	var ln net.Listener
+	var err error
+	switch {
+	case runtime.GOOS == "windows":
+		ln, err = serverListener_tcp()
+	default:
+		ln, err = serverListener_unix(unixSocketCfg)
 	}
 
-	return serverListener_unix(unixSocketCfg)
+	return &grpcMuxer{
+		underlyingLn: ln,
+	}, err
 }
 
 func serverListener_tcp() (net.Listener, error) {

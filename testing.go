@@ -137,9 +137,12 @@ func TestGRPCConn(t testing.T, register func(*grpc.Server)) (*grpc.ClientConn, *
 // together and configured. This is used to test gRPC connections.
 func TestPluginGRPCConn(t testing.T, ps map[string]Plugin) (*GRPCClient, *GRPCServer) {
 	// Create a listener
-	l, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("err: %s", err)
+	}
+	grpcMuxLn := &grpcMuxer{
+		underlyingLn: ln,
 	}
 
 	// Start up the server
@@ -154,11 +157,11 @@ func TestPluginGRPCConn(t testing.T, ps map[string]Plugin) (*GRPCClient, *GRPCSe
 	if err := server.Init(); err != nil {
 		t.Fatalf("err: %s", err)
 	}
-	go server.Serve(l)
+	go server.Serve(grpcMuxLn)
 
 	// Connect to the server
 	conn, err := grpc.Dial(
-		l.Addr().String(),
+		grpcMuxLn.Addr().String(),
 		grpc.WithBlock(),
 		grpc.WithInsecure())
 	if err != nil {
@@ -166,7 +169,7 @@ func TestPluginGRPCConn(t testing.T, ps map[string]Plugin) (*GRPCClient, *GRPCSe
 	}
 
 	brokerGRPCClient := newGRPCBrokerClient(conn)
-	broker := newGRPCBroker(brokerGRPCClient, nil, UnixSocketConfig{}, nil)
+	broker := newGRPCBroker(brokerGRPCClient, nil, UnixSocketConfig{}, nil, grpcMuxLn)
 	go broker.Run()
 	go brokerGRPCClient.StartStream()
 
