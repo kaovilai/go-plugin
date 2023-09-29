@@ -1074,15 +1074,15 @@ func (c *Client) dialer(_ string, timeout time.Duration) (net.Conn, error) {
 		conn = tls.Client(conn, c.config.TLSConfig)
 	}
 
-	// c.session, err = yamux.Client(conn, nil)
-	// if err != nil {
-	// 	return nil, err
-	// }
+	c.session, err = yamux.Client(conn, nil)
+	if err != nil {
+		return nil, err
+	}
 
-	// conn, err = c.session.Open()
-	// if err != nil {
-	// 	return nil, err
-	// }
+	conn, err = c.session.Open()
+	if err != nil {
+		return nil, err
+	}
 
 	return conn, nil
 }

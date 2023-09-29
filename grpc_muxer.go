@@ -2,6 +2,7 @@ package plugin
 
 import (
 	"crypto/tls"
+	"errors"
 	"net"
 	"sync"
 
@@ -11,28 +12,34 @@ import (
 var _ net.Listener = (*grpcMuxer)(nil)
 
 type grpcMuxer struct {
-	mtx          sync.Mutex
+	once         sync.Once
 	underlyingLn net.Listener
 	session      *yamux.Session
 }
 
 func (m *grpcMuxer) Accept() (net.Conn, error) {
-	m.mtx.Lock()
-	defer m.mtx.Unlock()
+	var onceErr error
+	m.once.Do(func() {
+		if m.underlyingLn == nil {
+			return
+		}
 
-	// if m.session == nil {
-	// 	conn, err := m.underlyingLn.Accept()
-	// 	if err != nil {
-	// 		return nil, err
-	// 	}
+		var conn net.Conn
+		conn, onceErr = m.underlyingLn.Accept()
+		if onceErr != nil {
+			return
+		}
 
-	// 	m.session, err = yamux.Server(conn, nil)
-	// 	if err != nil {
-	// 		return nil, err
-	// 	}
-	// }
+		m.session, onceErr = yamux.Server(conn, nil)
+		if onceErr != nil {
+			return
+		}
+	})
+	if onceErr != nil {
+		return nil, onceErr
+	}
 
-	conn, err := m.underlyingLn.Accept()
+	conn, err := m.session.Accept()
 	if err != nil {
 		return nil, err
 	}
@@ -41,33 +48,34 @@ func (m *grpcMuxer) Accept() (net.Conn, error) {
 }
 
 func (m *grpcMuxer) Close() error {
-	m.mtx.Lock()
-	defer m.mtx.Unlock()
+	var err error
+	// if m.session != nil {
+	// 	errors.Join(err, m.session.Close())
+	// }
 
-	if m.session != nil {
-		return m.session.Close()
+	if m.underlyingLn != nil {
+		errors.Join(err, m.underlyingLn.Close())
 	}
 
-	return m.underlyingLn.Close()
+	return err
 }
 
 func (m *grpcMuxer) Addr() net.Addr {
-	m.mtx.Lock()
-	defer m.mtx.Unlock()
-
-	return m.underlyingLn.Addr()
+	if m.underlyingLn != nil {
+		return m.underlyingLn.Addr()
+	} else {
+		return m.session.Addr()
+	}
 }
 
 func (m *grpcMuxer) configureTLS(cfg *tls.Config) {
-	m.mtx.Lock()
-	defer m.mtx.Unlock()
-
 	m.underlyingLn = tls.NewListener(m.underlyingLn, cfg)
 }
 
-func (m *grpcMuxer) Session() *yamux.Session {
-	m.mtx.Lock()
-	defer m.mtx.Unlock()
+func (m *grpcMuxer) Dial() (net.Conn, error) {
+	if m.session == nil {
+		return nil, errors.New("connection not yet made")
+	}
 
-	return m.session
+	return m.session.Open()
 }

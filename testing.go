@@ -11,7 +11,6 @@ import (
 	"net/rpc"
 
 	hclog "github.com/hashicorp/go-hclog"
-	"github.com/hashicorp/go-plugin/internal/plugin"
 	"github.com/mitchellh/go-testing-interface"
 	"google.golang.org/grpc"
 )
@@ -137,12 +136,9 @@ func TestGRPCConn(t testing.T, register func(*grpc.Server)) (*grpc.ClientConn, *
 // together and configured. This is used to test gRPC connections.
 func TestPluginGRPCConn(t testing.T, ps map[string]Plugin) (*GRPCClient, *GRPCServer) {
 	// Create a listener
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := serverListener(UnixSocketConfig{})
 	if err != nil {
-		t.Fatalf("err: %s", err)
-	}
-	grpcMuxLn := &grpcMuxer{
-		underlyingLn: ln,
+		t.Fatal(err)
 	}
 
 	// Start up the server
@@ -153,34 +149,26 @@ func TestPluginGRPCConn(t testing.T, ps map[string]Plugin) (*GRPCClient, *GRPCSe
 		Stdout:  new(bytes.Buffer),
 		Stderr:  new(bytes.Buffer),
 		logger:  hclog.Default(),
+		muxer:   ln,
 	}
 	if err := server.Init(); err != nil {
 		t.Fatalf("err: %s", err)
 	}
-	go server.Serve(grpcMuxLn)
+	go server.Serve(ln)
 
-	// Connect to the server
-	conn, err := grpc.Dial(
-		grpcMuxLn.Addr().String(),
-		grpc.WithBlock(),
-		grpc.WithInsecure())
+	client := &Client{
+		address:  ln.Addr(),
+		protocol: ProtocolGRPC,
+		config: &ClientConfig{
+			Plugins: ps,
+		},
+		logger: hclog.Default(),
+	}
+
+	grpcClient, err := newGRPCClient(context.Background(), client)
 	if err != nil {
-		t.Fatalf("err: %s", err)
+		t.Fatal(err)
 	}
 
-	brokerGRPCClient := newGRPCBrokerClient(conn)
-	broker := newGRPCBroker(brokerGRPCClient, nil, UnixSocketConfig{}, nil, grpcMuxLn)
-	go broker.Run()
-	go brokerGRPCClient.StartStream()
-
-	// Create the client
-	client := &GRPCClient{
-		Conn:       conn,
-		Plugins:    ps,
-		broker:     broker,
-		doneCtx:    context.Background(),
-		controller: plugin.NewGRPCControllerClient(conn),
-	}
-
-	return client, server
+	return grpcClient, server
 }

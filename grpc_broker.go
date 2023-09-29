@@ -397,8 +397,9 @@ func (b *GRPCBroker) Dial(id uint32) (conn *grpc.ClientConn, err error) {
 
 	if c.Network == "" && c.Address == "" {
 		// Muxed connection.
+		fmt.Println("MUXING")
 		return dialGRPCConn(b.tls, func(string, time.Duration) (net.Conn, error) {
-			conn, err := b.muxer.session.Open()
+			conn, err := b.muxer.Dial()
 			if err != nil {
 				return nil, fmt.Errorf("error opening muxed connection: %w", err)
 			}
@@ -406,6 +407,8 @@ func (b *GRPCBroker) Dial(id uint32) (conn *grpc.ClientConn, err error) {
 			return conn, nil
 		})
 	}
+
+	fmt.Println("NOT MUXING")
 
 	network, address := c.Network, c.Address
 	if b.addrTranslator != nil {
