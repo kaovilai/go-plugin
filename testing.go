@@ -149,7 +149,7 @@ func TestPluginGRPCConn(t testing.T, ps map[string]Plugin) (*GRPCClient, *GRPCSe
 		Stdout:  new(bytes.Buffer),
 		Stderr:  new(bytes.Buffer),
 		logger:  hclog.Default(),
-		muxer:   ln,
+		muxer:   newGRPCServerMuxer(ln),
 	}
 	if err := server.Init(); err != nil {
 		t.Fatalf("err: %s", err)

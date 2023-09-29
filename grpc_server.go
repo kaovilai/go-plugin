@@ -62,7 +62,7 @@ type GRPCServer struct {
 
 	logger hclog.Logger
 
-	muxer *grpcMuxer
+	muxer grpcMuxer
 }
 
 // ServerProtocol impl.

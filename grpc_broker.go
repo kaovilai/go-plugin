@@ -271,7 +271,7 @@ type GRPCBroker struct {
 	unixSocketCfg  UnixSocketConfig
 	addrTranslator runner.AddrTranslator
 
-	muxer *grpcMuxer
+	muxer grpcMuxer
 
 	sync.Mutex
 }
@@ -281,7 +281,7 @@ type gRPCBrokerPending struct {
 	doneCh chan struct{}
 }
 
-func newGRPCBroker(s streamer, tls *tls.Config, unixSocketCfg UnixSocketConfig, addrTranslator runner.AddrTranslator, muxer *grpcMuxer) *GRPCBroker {
+func newGRPCBroker(s streamer, tls *tls.Config, unixSocketCfg UnixSocketConfig, addrTranslator runner.AddrTranslator, muxer grpcMuxer) *GRPCBroker {
 	return &GRPCBroker{
 		streamer: s,
 		streams:  make(map[uint32]*gRPCBrokerPending),
@@ -349,9 +349,15 @@ func (b *GRPCBroker) AcceptAndServe(id uint32, newGRPCServer func([]grpc.ServerO
 	// or the broker is shutdown.
 	var g run.Group
 
+	session, err := b.muxer.Session()
+	if err != nil {
+		log.Printf("[ERR] plugin: plugin AcceptAndServeMux connection error: %s", err)
+		return
+	}
+
 	// Serve on the listener, if shutting down call GracefulStop.
 	g.Add(func() error {
-		return server.Serve(b.muxer)
+		return server.Serve(session)
 	}, func(err error) {
 		server.GracefulStop()
 	})
@@ -399,7 +405,11 @@ func (b *GRPCBroker) Dial(id uint32) (conn *grpc.ClientConn, err error) {
 		// Muxed connection.
 		fmt.Println("MUXING")
 		return dialGRPCConn(b.tls, func(string, time.Duration) (net.Conn, error) {
-			conn, err := b.muxer.Dial()
+			session, err := b.muxer.Session()
+			if err != nil {
+				return nil, fmt.Errorf("error getting muxed session: %w", err)
+			}
+			conn, err := session.Open()
 			if err != nil {
 				return nil, fmt.Errorf("error opening muxed connection: %w", err)
 			}
