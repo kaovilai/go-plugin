@@ -58,12 +58,13 @@ func dialGRPCConn(tls *tls.Config, dialer func(string, time.Duration) (net.Conn,
 // newGRPCClient creates a new GRPCClient. The Client argument is expected
 // to be successfully started already with a lock held.
 func newGRPCClient(doneCtx context.Context, c *Client) (*GRPCClient, error) {
-	conn, err := dialGRPCConn(c.config.TLSConfig, c.dialer, c.config.GRPCDialOptions...)
+	c.logger.Debug("creating muxer", "address", c.address)
+	muxer, err := newGRPCClientMuxer(c.logger.Named("client-muxer"), c.address)
 	if err != nil {
 		return nil, err
 	}
 
-	muxer, err := newGRPCClientMuxer(c.address)
+	conn, err := dialGRPCConn(c.config.TLSConfig, c.dialer(muxer), c.config.GRPCDialOptions...)
 	if err != nil {
 		return nil, err
 	}

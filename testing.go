@@ -141,20 +141,25 @@ func TestPluginGRPCConn(t testing.T, ps map[string]Plugin) (*GRPCClient, *GRPCSe
 		t.Fatal(err)
 	}
 
+	logger := hclog.New(&hclog.LoggerOptions{
+		Level: hclog.Debug,
+	})
+
 	// Start up the server
+	muxer := newGRPCServerMuxer(logger.Named("test-server-muxer"), ln)
 	server := &GRPCServer{
 		Plugins: ps,
 		DoneCh:  make(chan struct{}),
 		Server:  DefaultGRPCServer,
 		Stdout:  new(bytes.Buffer),
 		Stderr:  new(bytes.Buffer),
-		logger:  hclog.Default(),
-		muxer:   newGRPCServerMuxer(ln),
+		logger:  logger,
+		muxer:   muxer,
 	}
 	if err := server.Init(); err != nil {
 		t.Fatalf("err: %s", err)
 	}
-	go server.Serve(ln)
+	go server.Serve(muxer)
 
 	client := &Client{
 		address:  ln.Addr(),

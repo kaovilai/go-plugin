@@ -349,15 +349,9 @@ func (b *GRPCBroker) AcceptAndServe(id uint32, newGRPCServer func([]grpc.ServerO
 	// or the broker is shutdown.
 	var g run.Group
 
-	session, err := b.muxer.Session()
-	if err != nil {
-		log.Printf("[ERR] plugin: plugin AcceptAndServeMux connection error: %s", err)
-		return
-	}
-
 	// Serve on the listener, if shutting down call GracefulStop.
 	g.Add(func() error {
-		return server.Serve(session)
+		return server.Serve(b.muxer)
 	}, func(err error) {
 		server.GracefulStop()
 	})
@@ -403,22 +397,15 @@ func (b *GRPCBroker) Dial(id uint32) (conn *grpc.ClientConn, err error) {
 
 	if c.Network == "" && c.Address == "" {
 		// Muxed connection.
-		fmt.Println("MUXING")
 		return dialGRPCConn(b.tls, func(string, time.Duration) (net.Conn, error) {
-			session, err := b.muxer.Session()
+			conn, err := b.muxer.Dial()
 			if err != nil {
-				return nil, fmt.Errorf("error getting muxed session: %w", err)
-			}
-			conn, err := session.Open()
-			if err != nil {
-				return nil, fmt.Errorf("error opening muxed connection: %w", err)
+				return nil, err
 			}
 
 			return conn, nil
 		})
 	}
-
-	fmt.Println("NOT MUXING")
 
 	network, address := c.Network, c.Address
 	if b.addrTranslator != nil {

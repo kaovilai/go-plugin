@@ -1,10 +1,8 @@
 package plugin
 
-import (
-	"github.com/hashicorp/yamux"
-)
+import "net"
 
 type grpcMuxer interface {
-	Session() (*yamux.Session, error)
-	Close() error
+	Dial() (net.Conn, error)
+	net.Listener
 }

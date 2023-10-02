@@ -951,12 +951,11 @@ func (c *Client) reattach() (net.Addr, error) {
 
 	if c.config.Reattach.Test {
 		c.negotiatedVersion = c.config.Reattach.ProtocolVersion
-	}
-
-	// If we're in test mode, we do NOT set the process. This avoids the
-	// process being killed (the only purpose we have for c.process), since
-	// in test mode the process is responsible for exiting on its own.
-	if !c.config.Reattach.Test {
+	} else {
+		// If we're in test mode, we do NOT set the runner. This avoids the
+		// runner being killed (the only purpose we have for setting c.runner
+		// when reattaching), since in test mode the process is responsible for
+		// exiting on its own.
 		c.runner = r
 	}
 
@@ -1058,21 +1057,30 @@ func netAddrDialer(addr net.Addr) func(string, time.Duration) (net.Conn, error) 
 	}
 }
 
-// dialer is compatible with grpc.WithDialer and creates the connection
-// to the plugin.
-func (c *Client) dialer(_ string, timeout time.Duration) (net.Conn, error) {
-	conn, err := netAddrDialer(c.address)("", timeout)
-	if err != nil {
-		return nil, err
-	}
+// dialerDirect returns a function that is compatible with grpc.WithDialer and
+// creates the connection to the plugin.
+func (c *Client) dialer(muxer grpcMuxer) func(_ string, timeout time.Duration) (net.Conn, error) {
+	return func(_ string, timeout time.Duration) (net.Conn, error) {
+		var conn net.Conn
+		var err error
+		if muxer == nil {
+			conn, err = netAddrDialer(c.address)("", timeout)
+		} else {
+			conn, err = muxer.Dial()
+		}
 
-	// If we have a TLS config we wrap our connection. We only do this
-	// for net/rpc since gRPC uses its own mechanism for TLS.
-	if c.protocol == ProtocolNetRPC && c.config.TLSConfig != nil {
-		conn = tls.Client(conn, c.config.TLSConfig)
-	}
+		if err != nil {
+			return nil, err
+		}
 
-	return conn, nil
+		// If we have a TLS config we wrap our connection. We only do this
+		// for net/rpc since gRPC uses its own mechanism for TLS.
+		if c.protocol == ProtocolNetRPC && c.config.TLSConfig != nil {
+			conn = tls.Client(conn, c.config.TLSConfig)
+		}
+
+		return conn, nil
+	}
 }
 
 var stdErrBufferSize = 64 * 1024
