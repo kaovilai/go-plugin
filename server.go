@@ -10,6 +10,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"github.com/hashicorp/go-plugin/internal/grpcmux"
 	"io"
 	"net"
 	"os"
@@ -370,7 +371,7 @@ func Serve(opts *ServeConfig) {
 
 	// Build the server type
 	var server ServerProtocol
-	muxer := newGRPCServerMuxer(logger.Named("server-muxer"), listener)
+	muxer := grpcmux.NewGRPCServerMuxer(logger.Named("server-muxer"), listener)
 	switch protoType {
 	case ProtocolNetRPC:
 		// If we have a TLS configuration then we wrap the listener

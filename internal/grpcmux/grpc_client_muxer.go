@@ -1,4 +1,4 @@
-package plugin
+package grpcmux
 
 import (
 	"fmt"
@@ -8,18 +8,22 @@ import (
 	"github.com/hashicorp/yamux"
 )
 
-var _ grpcMuxer = (*grpcClientMuxer)(nil)
+var _ GRPCMuxer = (*GRPCClientMuxer)(nil)
 
-type grpcClientMuxer struct {
+type GRPCClientMuxer struct {
 	logger  hclog.Logger
 	session *yamux.Session
 }
 
-func newGRPCClientMuxer(logger hclog.Logger, addr net.Addr) (*grpcClientMuxer, error) {
+func NewGRPCClientMuxer(logger hclog.Logger, addr net.Addr) (*GRPCClientMuxer, error) {
 	logger.Debug("making new client mux initial connection")
-	conn, err := netAddrDialer(addr)("unused", 0)
+	conn, err := net.Dial(addr.Network(), addr.String())
 	if err != nil {
 		return nil, err
+	}
+	if tcpConn, ok := conn.(*net.TCPConn); ok {
+		// Make sure to set keep alive so that the connection doesn't die
+		_ = tcpConn.SetKeepAlive(true)
 	}
 
 	sess, err := yamux.Client(conn, nil)
@@ -28,13 +32,13 @@ func newGRPCClientMuxer(logger hclog.Logger, addr net.Addr) (*grpcClientMuxer, e
 	}
 
 	logger.Debug("client connected", "addr", addr)
-	return &grpcClientMuxer{
+	return &GRPCClientMuxer{
 		logger:  logger,
 		session: sess,
 	}, nil
 }
 
-func (m *grpcClientMuxer) Dial() (net.Conn, error) {
+func (m *GRPCClientMuxer) Dial() (net.Conn, error) {
 	stream, err := m.session.OpenStream()
 	if err != nil {
 		return nil, fmt.Errorf("error dialling new client stream: %w", err)
@@ -44,7 +48,7 @@ func (m *grpcClientMuxer) Dial() (net.Conn, error) {
 	return stream, nil
 }
 
-func (m *grpcClientMuxer) Accept() (net.Conn, error) {
+func (m *GRPCClientMuxer) Accept() (net.Conn, error) {
 	stream, err := m.session.AcceptStream()
 	if err != nil {
 		return nil, fmt.Errorf("error accepting new client stream: %w", err)
@@ -54,11 +58,11 @@ func (m *grpcClientMuxer) Accept() (net.Conn, error) {
 	return stream, nil
 }
 
-func (m *grpcClientMuxer) Addr() net.Addr {
+func (m *GRPCClientMuxer) Addr() net.Addr {
 	return m.session.Addr()
 }
 
-func (m *grpcClientMuxer) Close() error {
+func (m *GRPCClientMuxer) Close() error {
 	m.logger.Debug("closing client muxer")
 	return m.session.Close()
 }

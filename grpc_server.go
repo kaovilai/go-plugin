@@ -8,6 +8,7 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
+	"github.com/hashicorp/go-plugin/internal/grpcmux"
 	"io"
 	"net"
 
@@ -62,7 +63,7 @@ type GRPCServer struct {
 
 	logger hclog.Logger
 
-	muxer grpcMuxer
+	muxer grpcmux.GRPCMuxer
 }
 
 // ServerProtocol impl.

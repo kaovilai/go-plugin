@@ -555,10 +555,15 @@ func testClient_reattachGRPC(t *testing.T, useReattachFunc bool) {
 	// Get the reattach configuration
 	reattach := c.ReattachConfig()
 
+	muxer, err := c.muxer(reattach.Addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+
 	if useReattachFunc {
 		pid := reattach.Pid
 		reattach.Pid = 0
-		reattach.ReattachFunc = cmdrunner.ReattachFunc(pid, reattach.Addr)
+		reattach.ReattachFunc = cmdrunner.ReattachFunc(pid, reattach.Addr, muxer)
 	}
 
 	// Create a new client

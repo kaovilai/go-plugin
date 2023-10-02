@@ -1,8 +1,8 @@
-package plugin
+package grpcmux
 
 import "net"
 
-type grpcMuxer interface {
+type GRPCMuxer interface {
 	Dial() (net.Conn, error)
 	net.Listener
 }

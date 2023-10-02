@@ -6,6 +6,7 @@ package plugin
 import (
 	"bytes"
 	"context"
+	"github.com/hashicorp/go-plugin/internal/grpcmux"
 	"io"
 	"net"
 	"net/rpc"
@@ -146,7 +147,7 @@ func TestPluginGRPCConn(t testing.T, ps map[string]Plugin) (*GRPCClient, *GRPCSe
 	})
 
 	// Start up the server
-	muxer := newGRPCServerMuxer(logger.Named("test-server-muxer"), ln)
+	muxer := grpcmux.NewGRPCServerMuxer(logger.Named("test-server-muxer"), ln)
 	server := &GRPCServer{
 		Plugins: ps,
 		DoneCh:  make(chan struct{}),

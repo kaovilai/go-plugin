@@ -12,6 +12,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"github.com/hashicorp/go-plugin/internal/grpcmux"
 	"hash"
 	"io"
 	"io/ioutil"
@@ -102,6 +103,8 @@ type Client struct {
 	processKilled bool
 
 	unixSocketCfg UnixSocketConfig
+
+	grpcMuxer grpcmux.GRPCMuxer
 }
 
 // NegotiatedVersion returns the protocol version negotiated with the server.
@@ -277,7 +280,7 @@ type ReattachConfig struct {
 	// At least one of Pid or ReattachFunc must be set.
 	ReattachFunc runner.ReattachFunc
 
-	// Test is set to true if this is reattaching to to a plugin in "test mode"
+	// Test is set to true if this is reattaching to a plugin in "test mode"
 	// (see ServeConfig.Test). In this mode, client.Kill will NOT kill the
 	// process and instead will rely on the plugin to terminate itself. This
 	// should not be used in non-test environments.
@@ -907,10 +910,15 @@ func (c *Client) loadServerCert(cert string) error {
 }
 
 func (c *Client) reattach() (net.Addr, error) {
+	muxer, err := c.muxer(c.config.Reattach.Addr)
+	if err != nil {
+		return nil, err
+	}
+
 	reattachFunc := c.config.Reattach.ReattachFunc
 	// For backwards compatibility default to cmdrunner.ReattachFunc
 	if reattachFunc == nil {
-		reattachFunc = cmdrunner.ReattachFunc(c.config.Reattach.Pid, c.config.Reattach.Addr)
+		reattachFunc = cmdrunner.ReattachFunc(c.config.Reattach.Pid, c.config.Reattach.Addr, muxer)
 	}
 
 	r, err := reattachFunc()
@@ -1057,12 +1065,30 @@ func netAddrDialer(addr net.Addr) func(string, time.Duration) (net.Conn, error) 
 	}
 }
 
+func (c *Client) muxer(addr net.Addr) (grpcmux.GRPCMuxer, error) {
+	if c.grpcMuxer != nil {
+		return c.grpcMuxer, nil
+	}
+
+	m, err := grpcmux.NewGRPCClientMuxer(c.logger, addr)
+	if err != nil {
+		return nil, err
+	}
+
+	c.grpcMuxer = m
+	return c.grpcMuxer, nil
+}
+
 // dialerDirect returns a function that is compatible with grpc.WithDialer and
 // creates the connection to the plugin.
-func (c *Client) dialer(muxer grpcMuxer) func(_ string, timeout time.Duration) (net.Conn, error) {
+func (c *Client) dialer() func(_ string, timeout time.Duration) (net.Conn, error) {
 	return func(_ string, timeout time.Duration) (net.Conn, error) {
+		muxer, err := c.muxer(c.address)
+		if err != nil {
+			return nil, err
+		}
+
 		var conn net.Conn
-		var err error
 		if muxer == nil {
 			conn, err = netAddrDialer(c.address)("", timeout)
 		} else {

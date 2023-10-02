@@ -1,4 +1,4 @@
-package plugin
+package grpcmux
 
 import (
 	"errors"
@@ -10,54 +10,57 @@ import (
 	"github.com/hashicorp/yamux"
 )
 
-var _ grpcMuxer = (*grpcServerMuxer)(nil)
+var _ GRPCMuxer = (*GRPCServerMuxer)(nil)
 
-type grpcServerMuxer struct {
+type GRPCServerMuxer struct {
 	addr   net.Addr
 	errCh  chan error
 	logger hclog.Logger
+	ln     net.Listener
 
 	sess *yamux.Session
 }
 
-func newGRPCServerMuxer(logger hclog.Logger, ln net.Listener) *grpcServerMuxer {
-	m := &grpcServerMuxer{
+func NewGRPCServerMuxer(logger hclog.Logger, ln net.Listener) *GRPCServerMuxer {
+	m := &GRPCServerMuxer{
 		addr:   ln.Addr(),
 		errCh:  make(chan error),
 		logger: logger,
+		ln:     ln,
 	}
 
-	go func() {
-		defer close(m.errCh)
-
-		logger.Debug("accepting initial connection")
-		conn, err := ln.Accept()
-		if err != nil {
-			m.errCh <- err
-			return
-		}
-
-		logger.Debug("initial server connection accepted", "addr", ln.Addr())
-		m.sess, err = yamux.Server(conn, nil)
-		if err != nil {
-			m.errCh <- err
-			return
-		}
-		logger.Debug("server session created")
-	}()
+	go m.acceptNewConnection()
 
 	return m
 }
 
-func (m *grpcServerMuxer) session() (*yamux.Session, error) {
+func (m *GRPCServerMuxer) acceptNewConnection() {
+	defer close(m.errCh)
+
+	m.logger.Debug("accepting initial connection")
+	conn, err := m.ln.Accept()
+	if err != nil {
+		m.errCh <- err
+		return
+	}
+
+	m.logger.Debug("initial server connection accepted", "addr", m.addr)
+	m.sess, err = yamux.Server(conn, nil)
+	if err != nil {
+		m.errCh <- err
+		return
+	}
+	m.logger.Debug("server session created")
+	m.errCh <- nil
+}
+
+func (m *GRPCServerMuxer) session() (*yamux.Session, error) {
 	select {
 	case err := <-m.errCh:
 		if err != nil {
-			m.logger.Error("error from channel", "error", err)
 			return nil, err
 		}
 	case <-time.After(2 * time.Second):
-		m.logger.Error("timeout waiting for server session")
 		return nil, errors.New("timed out waiting for connection to be established")
 	}
 
@@ -69,7 +72,7 @@ func (m *grpcServerMuxer) session() (*yamux.Session, error) {
 	return m.sess, nil
 }
 
-func (m *grpcServerMuxer) Dial() (net.Conn, error) {
+func (m *GRPCServerMuxer) Dial() (net.Conn, error) {
 	sess, err := m.session()
 	if err != nil {
 		return nil, fmt.Errorf("error getting session for server Dial: %w", err)
@@ -84,12 +87,13 @@ func (m *grpcServerMuxer) Dial() (net.Conn, error) {
 	return stream, nil
 }
 
-func (m *grpcServerMuxer) Accept() (net.Conn, error) {
+func (m *GRPCServerMuxer) Accept() (net.Conn, error) {
 	sess, err := m.session()
 	if err != nil {
 		return nil, fmt.Errorf("error getting session for server Accept: %w", err)
 	}
 
+	m.logger.Debug("accepting new server stream...")
 	stream, err := sess.AcceptStream()
 	if err != nil {
 		return nil, fmt.Errorf("error accepting new server stream: %w", err)
@@ -99,11 +103,11 @@ func (m *grpcServerMuxer) Accept() (net.Conn, error) {
 	return stream, nil
 }
 
-func (m *grpcServerMuxer) Addr() net.Addr {
+func (m *GRPCServerMuxer) Addr() net.Addr {
 	return m.addr
 }
 
-func (m *grpcServerMuxer) Close() error {
+func (m *GRPCServerMuxer) Close() error {
 	m.logger.Debug("closing server muxer")
 	if m.sess != nil {
 		return m.sess.Close()
@@ -111,7 +115,3 @@ func (m *grpcServerMuxer) Close() error {
 
 	return nil
 }
-
-// func (m *grpcServerMuxer) configureTLS(cfg *tls.Config) {
-// 	m.underlyingLn = tls.NewListener(m.underlyingLn, cfg)
-// }

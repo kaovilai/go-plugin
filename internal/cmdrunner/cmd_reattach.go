@@ -6,6 +6,7 @@ package cmdrunner
 import (
 	"context"
 	"fmt"
+	"github.com/hashicorp/go-plugin/internal/grpcmux"
 	"net"
 	"os"
 
@@ -14,7 +15,7 @@ import (
 
 // ReattachFunc returns a function that allows reattaching to a plugin running
 // as a plain process. The process may or may not be a child process.
-func ReattachFunc(pid int, addr net.Addr) runner.ReattachFunc {
+func ReattachFunc(pid int, addr net.Addr, muxer grpcmux.GRPCMuxer) runner.ReattachFunc {
 	return func() (runner.AttachedRunner, error) {
 		p, err := os.FindProcess(pid)
 		if err != nil {
@@ -26,7 +27,12 @@ func ReattachFunc(pid int, addr net.Addr) runner.ReattachFunc {
 
 		// Attempt to connect to the addr since on Unix systems FindProcess
 		// doesn't actually return an error if it can't find the process.
-		conn, err := net.Dial(addr.Network(), addr.String())
+		var conn net.Conn
+		if muxer == nil {
+			conn, err = net.Dial(addr.Network(), addr.String())
+		} else {
+			conn, err = muxer.Dial()
+		}
 		if err != nil {
 			p.Kill()
 			return nil, ErrProcessNotFound
