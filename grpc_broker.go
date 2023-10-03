@@ -352,6 +352,7 @@ func (b *GRPCBroker) AcceptAndServe(id uint32, newGRPCServer func([]grpc.ServerO
 
 	// Serve on the listener, if shutting down call GracefulStop.
 	g.Add(func() error {
+		log.Printf("Serving broker server on muxer\n")
 		return server.Serve(b.muxer)
 	}, func(err error) {
 		server.GracefulStop()
@@ -387,6 +388,7 @@ func (b *GRPCBroker) Close() error {
 func (b *GRPCBroker) Dial(id uint32) (conn *grpc.ClientConn, err error) {
 	var c *plugin.ConnInfo
 
+	log.Printf("dialling gRPC broker stream ID: %d\n", id)
 	// Open the stream
 	p := b.getStream(id)
 	select {

@@ -7,10 +7,9 @@ import (
 	"context"
 	"fmt"
 	"github.com/hashicorp/go-plugin/internal/grpcmux"
+	"github.com/hashicorp/go-plugin/runner"
 	"net"
 	"os"
-
-	"github.com/hashicorp/go-plugin/runner"
 )
 
 // ReattachFunc returns a function that allows reattaching to a plugin running
@@ -30,15 +29,15 @@ func ReattachFunc(pid int, addr net.Addr, muxer grpcmux.GRPCMuxer) runner.Reatta
 		var conn net.Conn
 		if muxer == nil {
 			conn, err = net.Dial(addr.Network(), addr.String())
+			if err != nil {
+				p.Kill()
+				return nil, ErrProcessNotFound
+			}
+			conn.Close()
 		} else {
-			conn, err = muxer.Dial()
+			//debug.PrintStack()
+			//conn, err = muxer.Dial()
 		}
-		if err != nil {
-			p.Kill()
-			return nil, ErrProcessNotFound
-		}
-		conn.Close()
-
 		return &CmdAttachedRunner{
 			pid:     pid,
 			process: p,

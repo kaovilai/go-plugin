@@ -104,7 +104,8 @@ type Client struct {
 
 	unixSocketCfg UnixSocketConfig
 
-	grpcMuxer grpcmux.GRPCMuxer
+	grpcMuxerOnce sync.Once
+	grpcMuxer     grpcmux.GRPCMuxer
 }
 
 // NegotiatedVersion returns the protocol version negotiated with the server.
@@ -329,7 +330,7 @@ func (s *SecureConfig) Check(filePath string) (bool, error) {
 	return subtle.ConstantTimeCompare(sum, s.Checksum) == 1, nil
 }
 
-// This makes sure all the managed subprocesses are killed and properly
+// CleanupClients makes sure all the managed subprocesses are killed and properly
 // logged. This should be called before the parent process running the
 // plugins exits.
 //
@@ -355,12 +356,12 @@ func CleanupClients() {
 	wg.Wait()
 }
 
-// Creates a new plugin client which manages the lifecycle of an external
+// NewClient creates a new plugin client which manages the lifecycle of an external
 // plugin and gets the address for the RPC connection.
 //
 // The client must be cleaned up at some point by calling Kill(). If
 // the client is a managed client (created with ClientConfig.Managed) you
-// can just call CleanupClients at the end of your program and they will
+// can just call CleanupClients at the end of your program, and they will
 // be properly cleaned.
 func NewClient(config *ClientConfig) (c *Client) {
 	if config.MinPort == 0 && config.MaxPort == 0 {
@@ -377,10 +378,10 @@ func NewClient(config *ClientConfig) (c *Client) {
 	}
 
 	if config.SyncStdout == nil {
-		config.SyncStdout = ioutil.Discard
+		config.SyncStdout = io.Discard
 	}
 	if config.SyncStderr == nil {
-		config.SyncStderr = ioutil.Discard
+		config.SyncStderr = io.Discard
 	}
 
 	if config.AllowedProtocols == nil {
@@ -910,9 +911,13 @@ func (c *Client) loadServerCert(cert string) error {
 }
 
 func (c *Client) reattach() (net.Addr, error) {
-	muxer, err := c.muxer(c.config.Reattach.Addr)
-	if err != nil {
-		return nil, err
+	var muxer grpcmux.GRPCMuxer
+	if c.config.Reattach.Protocol == ProtocolGRPC {
+		var err error
+		muxer, err = c.muxer(c.config.Reattach.Addr)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	reattachFunc := c.config.Reattach.ReattachFunc
@@ -1066,16 +1071,15 @@ func netAddrDialer(addr net.Addr) func(string, time.Duration) (net.Conn, error) 
 }
 
 func (c *Client) muxer(addr net.Addr) (grpcmux.GRPCMuxer, error) {
-	if c.grpcMuxer != nil {
-		return c.grpcMuxer, nil
-	}
+	var err error
+	c.grpcMuxerOnce.Do(func() {
+		c.grpcMuxer, err = grpcmux.NewGRPCClientMuxer(c.logger, addr)
+	})
 
-	m, err := grpcmux.NewGRPCClientMuxer(c.logger, addr)
 	if err != nil {
 		return nil, err
 	}
 
-	c.grpcMuxer = m
 	return c.grpcMuxer, nil
 }
 
@@ -1083,16 +1087,17 @@ func (c *Client) muxer(addr net.Addr) (grpcmux.GRPCMuxer, error) {
 // creates the connection to the plugin.
 func (c *Client) dialer() func(_ string, timeout time.Duration) (net.Conn, error) {
 	return func(_ string, timeout time.Duration) (net.Conn, error) {
-		muxer, err := c.muxer(c.address)
-		if err != nil {
-			return nil, err
-		}
-
 		var conn net.Conn
-		if muxer == nil {
-			conn, err = netAddrDialer(c.address)("", timeout)
-		} else {
+		var err error
+		if c.protocol == ProtocolGRPC {
+			var muxer grpcmux.GRPCMuxer
+			muxer, err = c.muxer(c.address)
+			if err != nil {
+				return nil, err
+			}
 			conn, err = muxer.Dial()
+		} else {
+			conn, err = netAddrDialer(c.address)("", timeout)
 		}
 
 		if err != nil {

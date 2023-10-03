@@ -371,7 +371,6 @@ func Serve(opts *ServeConfig) {
 
 	// Build the server type
 	var server ServerProtocol
-	muxer := grpcmux.NewGRPCServerMuxer(logger.Named("server-muxer"), listener)
 	switch protoType {
 	case ProtocolNetRPC:
 		// If we have a TLS configuration then we wrap the listener
@@ -389,6 +388,8 @@ func Serve(opts *ServeConfig) {
 		}
 
 	case ProtocolGRPC:
+		muxer := grpcmux.NewGRPCServerMuxer(logger.Named("server-muxer"), listener)
+		listener = muxer
 		// Create the gRPC server
 		server = &GRPCServer{
 			Plugins: pluginSet,
@@ -475,7 +476,7 @@ func Serve(opts *ServeConfig) {
 	}
 
 	// Accept connections and wait for completion
-	go server.Serve(muxer)
+	go server.Serve(listener)
 
 	ctx := context.Background()
 	if opts.Test != nil && opts.Test.Context != nil {
@@ -487,7 +488,6 @@ func Serve(opts *ServeConfig) {
 		// This isn't graceful at all but this is currently only used by
 		// tests and its our only way to stop.
 		listener.Close()
-		muxer.Close()
 
 		// If this is a grpc server, then we also ask the server itself to
 		// end which will kill all connections. There isn't an easy way to do

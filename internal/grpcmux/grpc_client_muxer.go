@@ -2,17 +2,18 @@ package grpcmux
 
 import (
 	"fmt"
-	"net"
-
 	"github.com/hashicorp/go-hclog"
 	"github.com/hashicorp/yamux"
+	"net"
 )
 
 var _ GRPCMuxer = (*GRPCClientMuxer)(nil)
 
 type GRPCClientMuxer struct {
-	logger  hclog.Logger
+	logger hclog.Logger
+
 	session *yamux.Session
+	addr    net.Addr
 }
 
 func NewGRPCClientMuxer(logger hclog.Logger, addr net.Addr) (*GRPCClientMuxer, error) {
@@ -31,7 +32,7 @@ func NewGRPCClientMuxer(logger hclog.Logger, addr net.Addr) (*GRPCClientMuxer, e
 		return nil, err
 	}
 
-	logger.Debug("client connected", "addr", addr)
+	logger.Debug("client muxer connected", "addr", addr)
 	return &GRPCClientMuxer{
 		logger:  logger,
 		session: sess,
@@ -39,6 +40,7 @@ func NewGRPCClientMuxer(logger hclog.Logger, addr net.Addr) (*GRPCClientMuxer, e
 }
 
 func (m *GRPCClientMuxer) Dial() (net.Conn, error) {
+	m.logger.Debug("dialling new client stream...")
 	stream, err := m.session.OpenStream()
 	if err != nil {
 		return nil, fmt.Errorf("error dialling new client stream: %w", err)
@@ -49,6 +51,7 @@ func (m *GRPCClientMuxer) Dial() (net.Conn, error) {
 }
 
 func (m *GRPCClientMuxer) Accept() (net.Conn, error) {
+	m.logger.Debug("accepting new client stream...")
 	stream, err := m.session.AcceptStream()
 	if err != nil {
 		return nil, fmt.Errorf("error accepting new client stream: %w", err)

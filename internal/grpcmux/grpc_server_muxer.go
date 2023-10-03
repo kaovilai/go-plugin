@@ -16,7 +16,6 @@ type GRPCServerMuxer struct {
 	addr   net.Addr
 	errCh  chan error
 	logger hclog.Logger
-	ln     net.Listener
 
 	sess *yamux.Session
 }
@@ -26,19 +25,18 @@ func NewGRPCServerMuxer(logger hclog.Logger, ln net.Listener) *GRPCServerMuxer {
 		addr:   ln.Addr(),
 		errCh:  make(chan error),
 		logger: logger,
-		ln:     ln,
 	}
 
-	go m.acceptNewConnection()
+	go m.acceptNewConnection(ln)
 
 	return m
 }
 
-func (m *GRPCServerMuxer) acceptNewConnection() {
+func (m *GRPCServerMuxer) acceptNewConnection(ln net.Listener) {
 	defer close(m.errCh)
 
 	m.logger.Debug("accepting initial connection")
-	conn, err := m.ln.Accept()
+	conn, err := ln.Accept()
 	if err != nil {
 		m.errCh <- err
 		return
@@ -78,6 +76,7 @@ func (m *GRPCServerMuxer) Dial() (net.Conn, error) {
 		return nil, fmt.Errorf("error getting session for server Dial: %w", err)
 	}
 
+	m.logger.Debug("dialling new server stream...")
 	stream, err := sess.OpenStream()
 	if err != nil {
 		return nil, fmt.Errorf("error dialling new server stream: %w", err)
