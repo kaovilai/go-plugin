@@ -34,7 +34,6 @@ type TestOptions struct {
 // TestConn is a helper function for returning a client and server
 // net.Conn connected to each other.
 func TestConn(t testing.T) (net.Conn, net.Conn) {
-	t.Skip()
 	// Listen to any local port. This listener will be closed
 	// after a single connection is established.
 	l, err := net.Listen("tcp", "127.0.0.1:0")
@@ -109,7 +108,6 @@ func TestPluginRPCConn(t testing.T, ps map[string]Plugin, opts *TestOptions) (*R
 // together and configured. The register function is used to register services
 // prior to the Serve call. This is used to test gRPC connections.
 func TestGRPCConn(t testing.T, register func(*grpc.Server)) (*grpc.ClientConn, *grpc.Server) {
-	t.Skip()
 	// Create a listener
 	l, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {

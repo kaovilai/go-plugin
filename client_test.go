@@ -303,7 +303,6 @@ func TestClient_grpcSyncStdio(t *testing.T) {
 		"use RunnerFunc": {true},
 	} {
 		t.Run(name, func(t *testing.T) {
-			t.Skip()
 			testClient_grpcSyncStdio(t, tc.useRunnerFunc)
 		})
 	}
@@ -389,7 +388,6 @@ func testClient_grpcSyncStdio(t *testing.T, useRunnerFunc bool) {
 }
 
 func TestClient_cmdAndReattach(t *testing.T) {
-	t.Skip()
 	config := &ClientConfig{
 		Cmd:      helperProcess("start-timeout"),
 		Reattach: &ReattachConfig{},
@@ -405,7 +403,6 @@ func TestClient_cmdAndReattach(t *testing.T) {
 }
 
 func TestClient_reattach(t *testing.T) {
-	t.Skip()
 	process := helperProcess("test-interface")
 	c := NewClient(&ClientConfig{
 		Cmd:             process,
@@ -466,7 +463,6 @@ func TestClient_reattach(t *testing.T) {
 }
 
 func TestClient_reattachNoProtocol(t *testing.T) {
-	t.Skip()
 	process := helperProcess("test-interface")
 	c := NewClient(&ClientConfig{
 		Cmd:             process,
@@ -528,7 +524,6 @@ func TestClient_reattachNoProtocol(t *testing.T) {
 }
 
 func TestClient_reattachGRPC(t *testing.T) {
-	t.Skip()
 	for name, tc := range map[string]struct {
 		useReattachFunc bool
 	}{
@@ -536,6 +531,7 @@ func TestClient_reattachGRPC(t *testing.T) {
 		"use ReattachFunc": {true},
 	} {
 		t.Run(name, func(t *testing.T) {
+			t.Skip()
 			testClient_reattachGRPC(t, tc.useReattachFunc)
 		})
 	}
