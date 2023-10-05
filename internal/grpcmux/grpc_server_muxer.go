@@ -13,18 +13,20 @@ import (
 var _ GRPCMuxer = (*GRPCServerMuxer)(nil)
 
 type GRPCServerMuxer struct {
-	addr   net.Addr
-	errCh  chan error
-	logger hclog.Logger
+	addr             net.Addr
+	errCh            chan error
+	logger           hclog.Logger
+	listenerChannels map[int]chan struct{}
 
 	sess *yamux.Session
 }
 
 func NewGRPCServerMuxer(logger hclog.Logger, ln net.Listener) *GRPCServerMuxer {
 	m := &GRPCServerMuxer{
-		addr:   ln.Addr(),
-		errCh:  make(chan error),
-		logger: logger,
+		addr:             ln.Addr(),
+		errCh:            make(chan error),
+		logger:           logger,
+		listenerChannels: make(map[int]chan struct{}),
 	}
 
 	go m.acceptNewConnection(ln)
@@ -113,4 +115,15 @@ func (m *GRPCServerMuxer) Close() error {
 	}
 
 	return nil
+}
+
+func (m *GRPCServerMuxer) Listener(id int) (net.Listener, error) {
+	sess, err := m.session()
+	if err != nil {
+		return nil, err
+	}
+
+	ln := newBlockedListener(sess)
+	m.listenerChannels[id] = ln.knockCh
+	return ln, nil
 }
