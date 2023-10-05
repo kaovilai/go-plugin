@@ -1,0 +1,16 @@
+// Copyright (c) HashiCorp, Inc.
+// SPDX-License-Identifier: MPL-2.0
+
+syntax = "proto3";
+package grpcmux;
+option go_package = "./grpcmux";
+
+message KnockRequest {
+  int64 service_id = 1;
+}
+
+message KnockResponse {}
+
+service Knocker {
+  rpc Knock(KnockRequest) returns (KnockResponse);
+}

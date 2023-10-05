@@ -1,19 +1,18 @@
 package grpcmux
 
 import (
-	"fmt"
 	"github.com/hashicorp/go-hclog"
 	"github.com/hashicorp/yamux"
+	"google.golang.org/grpc"
 	"net"
 )
 
 var _ GRPCMuxer = (*GRPCClientMuxer)(nil)
 
 type GRPCClientMuxer struct {
-	logger hclog.Logger
-
+	logger  hclog.Logger
 	session *yamux.Session
-	addr    net.Addr
+	mux     *muxer
 }
 
 func NewGRPCClientMuxer(logger hclog.Logger, addr net.Addr) (*GRPCClientMuxer, error) {
@@ -33,39 +32,47 @@ func NewGRPCClientMuxer(logger hclog.Logger, addr net.Addr) (*GRPCClientMuxer, e
 	}
 
 	logger.Debug("client muxer connected", "addr", addr)
-	return &GRPCClientMuxer{
+	m := &GRPCClientMuxer{
 		logger:  logger,
 		session: sess,
-	}, nil
+		mux: &muxer{
+			logger:         logger,
+			acceptChannels: make(map[int64]chan acceptResult),
+			knockCh:        make(chan int64),
+		},
+	}
+
+	go m.mux.acceptLoop(sess)
+	go m.startKnockerServer()
+
+	return m, nil
 }
 
-func (m *GRPCClientMuxer) Dial() (net.Conn, error) {
+func (m *GRPCClientMuxer) Dial(id uint32) (net.Conn, error) {
 	m.logger.Debug("dialling new client stream...")
-	stream, err := m.session.OpenStream()
-	if err != nil {
-		return nil, fmt.Errorf("error dialling new client stream: %w", err)
-	}
-
-	m.logger.Debug("dialled new client stream", "id", stream.StreamID())
-	return stream, nil
+	return m.mux.knockAndDial(m.session, id)
 }
 
-func (m *GRPCClientMuxer) Accept() (net.Conn, error) {
+func (m *GRPCClientMuxer) Listener(id uint32) (net.Listener, error) {
 	m.logger.Debug("accepting new client stream...")
-	stream, err := m.session.AcceptStream()
-	if err != nil {
-		return nil, fmt.Errorf("error accepting new client stream: %w", err)
-	}
-
-	m.logger.Debug("accepted new client stream", "id", stream.StreamID())
-	return stream, nil
-}
-
-func (m *GRPCClientMuxer) Addr() net.Addr {
-	return m.session.Addr()
+	return m.mux.listener(m.session, int64(id)), nil
 }
 
 func (m *GRPCClientMuxer) Close() error {
 	m.logger.Debug("closing client muxer")
 	return m.session.Close()
+}
+
+func (m *GRPCClientMuxer) startKnockerServer() {
+	ln := m.mux.listener(m.session, -1)
+	defer ln.Close()
+
+	server := grpc.NewServer()
+	RegisterKnockerServer(server, &knocker{
+		knockCh: m.mux.knockCh,
+	})
+
+	if err := server.Serve(ln); err != nil {
+		m.logger.Error("error serving knocker service", "error", err)
+	}
 }

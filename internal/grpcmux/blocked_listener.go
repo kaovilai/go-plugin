@@ -2,7 +2,6 @@ package grpcmux
 
 import (
 	"context"
-	"github.com/hashicorp/yamux"
 	"io"
 	"net"
 )
@@ -17,38 +16,34 @@ var _ net.Listener = (*blockedListener)(nil)
 // we dial to. The selection is based on the gRPC broker's connection ID, and is
 // handled one layer higher in the client and server muxer structs.
 type blockedListener struct {
-	addr    net.Addr
-	knockCh chan struct{}
-	doneCtx context.Context
-	cancel  func()
-	sess    *yamux.Session
+	addr     net.Addr
+	acceptCh chan acceptResult
+	doneCtx  context.Context
+	cancel   func()
 }
 
-func newBlockedListener(session *yamux.Session) *blockedListener {
+type acceptResult struct {
+	conn net.Conn
+	err  error
+}
+
+func newBlockedListener(addr net.Addr) *blockedListener {
 	ctx, cancel := context.WithCancel(context.Background())
 	return &blockedListener{
-		addr:    session.Addr(),
-		knockCh: make(chan struct{}),
-		doneCtx: ctx,
-		cancel:  cancel,
-		sess:    session,
+		addr:     addr,
+		acceptCh: make(chan acceptResult),
+		doneCtx:  ctx,
+		cancel:   cancel,
 	}
 }
 
 func (b blockedListener) Accept() (net.Conn, error) {
 	select {
-	case <-b.knockCh:
-		// Unblock.
+	case accept := <-b.acceptCh:
+		return accept.conn, accept.err
 	case <-b.doneCtx.Done():
-		return nil, io.EOF
+		return nil, io.EOF // TODO: There is probably a more appropriate error to use here
 	}
-
-	stream, err := b.sess.AcceptStream()
-	if err != nil {
-		return nil, err
-	}
-
-	return stream, nil
 }
 
 func (b blockedListener) Addr() net.Addr {

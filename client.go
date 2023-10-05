@@ -1095,7 +1095,7 @@ func (c *Client) dialer() func(_ string, timeout time.Duration) (net.Conn, error
 			if err != nil {
 				return nil, err
 			}
-			conn, err = muxer.Dial()
+			conn, err = muxer.Dial(0, nil)
 		} else {
 			conn, err = netAddrDialer(c.address)("", timeout)
 		}

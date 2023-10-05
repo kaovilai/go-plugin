@@ -335,7 +335,13 @@ func (b *GRPCBroker) AcceptAndServe(id uint32, newGRPCServer func([]grpc.ServerO
 	if err := b.streamer.Send(&plugin.ConnInfo{
 		ServiceId: id,
 	}); err != nil {
-		log.Printf("[ERR] plugin: plugin AcceptAndServeMux streamer error: %s", err)
+		log.Printf("[ERR] plugin: plugin AcceptAndServe streamer error: %s", err)
+		return
+	}
+
+	ln, err := b.muxer.Listener(id)
+	if err != nil {
+		log.Printf("[ERR] plugin: plugin AcceptAndServe listener error: %s", err)
 		return
 	}
 
@@ -353,7 +359,7 @@ func (b *GRPCBroker) AcceptAndServe(id uint32, newGRPCServer func([]grpc.ServerO
 	// Serve on the listener, if shutting down call GracefulStop.
 	g.Add(func() error {
 		log.Printf("Serving broker server on muxer\n")
-		return server.Serve(b.muxer)
+		return server.Serve(ln)
 	}, func(err error) {
 		server.GracefulStop()
 	})
@@ -384,6 +390,17 @@ func (b *GRPCBroker) Close() error {
 	return nil
 }
 
+func (b *GRPCBroker) muxDial(id uint32) func(string, time.Duration) (net.Conn, error) {
+	return func(string, time.Duration) (net.Conn, error) {
+		conn, err := b.muxer.Dial(id)
+		if err != nil {
+			return nil, err
+		}
+
+		return conn, nil
+	}
+}
+
 // Dial opens a connection by ID.
 func (b *GRPCBroker) Dial(id uint32) (conn *grpc.ClientConn, err error) {
 	var c *plugin.ConnInfo
@@ -400,14 +417,7 @@ func (b *GRPCBroker) Dial(id uint32) (conn *grpc.ClientConn, err error) {
 
 	if c.Network == "" && c.Address == "" {
 		// Muxed connection.
-		return dialGRPCConn(b.tls, func(string, time.Duration) (net.Conn, error) {
-			conn, err := b.muxer.Dial()
-			if err != nil {
-				return nil, err
-			}
-
-			return conn, nil
-		})
+		return dialGRPCConn(b.tls, b.muxDial(c.ServiceId))
 	}
 
 	network, address := c.Network, c.Address

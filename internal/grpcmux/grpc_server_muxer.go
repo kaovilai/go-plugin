@@ -13,50 +13,58 @@ import (
 var _ GRPCMuxer = (*GRPCServerMuxer)(nil)
 
 type GRPCServerMuxer struct {
-	addr             net.Addr
-	errCh            chan error
-	logger           hclog.Logger
-	listenerChannels map[int]chan struct{}
+	addr   net.Addr
+	logger hclog.Logger
 
-	sess *yamux.Session
+	sessionErrCh chan error
+	sess         *yamux.Session
+
+	muxCommon *muxer
 }
 
 func NewGRPCServerMuxer(logger hclog.Logger, ln net.Listener) *GRPCServerMuxer {
 	m := &GRPCServerMuxer{
-		addr:             ln.Addr(),
-		errCh:            make(chan error),
-		logger:           logger,
-		listenerChannels: make(map[int]chan struct{}),
+		addr:   ln.Addr(),
+		logger: logger,
+
+		sessionErrCh: make(chan error),
+		muxCommon: &muxer{
+			logger:         logger,
+			knockCh:        make(chan int64),
+			acceptChannels: make(map[int64]chan acceptResult),
+		},
 	}
 
-	go m.acceptNewConnection(ln)
+	go m.acceptSessionAndMuxAccept(ln)
 
 	return m
 }
 
-func (m *GRPCServerMuxer) acceptNewConnection(ln net.Listener) {
-	defer close(m.errCh)
+// acceptSessionAndMuxAccept is responsible for establishing the yamux session,
+// and then kicking off the acceptLoop function.
+func (m *GRPCServerMuxer) acceptSessionAndMuxAccept(ln net.Listener) {
+	defer close(m.sessionErrCh)
 
 	m.logger.Debug("accepting initial connection")
 	conn, err := ln.Accept()
 	if err != nil {
-		m.errCh <- err
+		m.sessionErrCh <- err
 		return
 	}
 
 	m.logger.Debug("initial server connection accepted", "addr", m.addr)
 	m.sess, err = yamux.Server(conn, nil)
 	if err != nil {
-		m.errCh <- err
+		m.sessionErrCh <- err
 		return
 	}
 	m.logger.Debug("server session created")
-	m.errCh <- nil
+	go m.muxCommon.acceptLoop(m.sess)
 }
 
 func (m *GRPCServerMuxer) session() (*yamux.Session, error) {
 	select {
-	case err := <-m.errCh:
+	case err := <-m.sessionErrCh:
 		if err != nil {
 			return nil, err
 		}
@@ -72,40 +80,13 @@ func (m *GRPCServerMuxer) session() (*yamux.Session, error) {
 	return m.sess, nil
 }
 
-func (m *GRPCServerMuxer) Dial() (net.Conn, error) {
+func (m *GRPCServerMuxer) Dial(id uint32) (net.Conn, error) {
 	sess, err := m.session()
 	if err != nil {
 		return nil, fmt.Errorf("error getting session for server Dial: %w", err)
 	}
 
-	m.logger.Debug("dialling new server stream...")
-	stream, err := sess.OpenStream()
-	if err != nil {
-		return nil, fmt.Errorf("error dialling new server stream: %w", err)
-	}
-
-	m.logger.Debug("dialled new server stream", "id", stream.StreamID())
-	return stream, nil
-}
-
-func (m *GRPCServerMuxer) Accept() (net.Conn, error) {
-	sess, err := m.session()
-	if err != nil {
-		return nil, fmt.Errorf("error getting session for server Accept: %w", err)
-	}
-
-	m.logger.Debug("accepting new server stream...")
-	stream, err := sess.AcceptStream()
-	if err != nil {
-		return nil, fmt.Errorf("error accepting new server stream: %w", err)
-	}
-
-	m.logger.Debug("accepted new server stream", "id", stream.StreamID())
-	return stream, nil
-}
-
-func (m *GRPCServerMuxer) Addr() net.Addr {
-	return m.addr
+	return m.muxCommon.knockAndDial(sess, id)
 }
 
 func (m *GRPCServerMuxer) Close() error {
@@ -117,13 +98,11 @@ func (m *GRPCServerMuxer) Close() error {
 	return nil
 }
 
-func (m *GRPCServerMuxer) Listener(id int) (net.Listener, error) {
+func (m *GRPCServerMuxer) Listener(id uint32) (net.Listener, error) {
 	sess, err := m.session()
 	if err != nil {
 		return nil, err
 	}
 
-	ln := newBlockedListener(sess)
-	m.listenerChannels[id] = ln.knockCh
-	return ln, nil
+	return m.muxCommon.listener(sess, int64(id)), nil
 }

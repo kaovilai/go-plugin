@@ -388,8 +388,12 @@ func Serve(opts *ServeConfig) {
 		}
 
 	case ProtocolGRPC:
-		muxer := grpcmux.NewGRPCServerMuxer(logger.Named("server-muxer"), listener)
-		listener = muxer
+		muxer := grpcmux.NewGRPCServerMuxer(logger, listener)
+		listener, err = muxer.Listener(0)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error creating mulitplexed listener: %s\n", err)
+			os.Exit(1)
+		}
 		// Create the gRPC server
 		server = &GRPCServer{
 			Plugins: pluginSet,
