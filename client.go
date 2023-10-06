@@ -105,7 +105,7 @@ type Client struct {
 	unixSocketCfg UnixSocketConfig
 
 	grpcMuxerOnce sync.Once
-	grpcMuxer     grpcmux.GRPCMuxer
+	grpcMuxer     *grpcmux.GRPCClientMuxer
 }
 
 // NegotiatedVersion returns the protocol version negotiated with the server.
@@ -240,6 +240,13 @@ type ClientConfig struct {
 	// to create gRPC connections. This only affects plugins using the gRPC
 	// protocol.
 	GRPCDialOptions []grpc.DialOption
+
+	// GRPCBrokerMultiplex turns on multiplexing for the gRPC broker. The gRPC
+	// broker will multiplex all brokered gRPC servers over the plugin's original
+	// listener socket instead of making a new listener for each server. The
+	// go-plugin library currently only includes a Go implementation for the
+	// server (i.e. plugin) side of gRPC broker multiplexing.
+	GRPCBrokerMultiplex bool
 
 	// SkipHostEnv allows plugins to run without inheriting the parent process'
 	// environment variables.
@@ -607,6 +614,9 @@ func (c *Client) Start() (addr net.Addr, err error) {
 		fmt.Sprintf("PLUGIN_MAX_PORT=%d", c.config.MaxPort),
 		fmt.Sprintf("PLUGIN_PROTOCOL_VERSIONS=%s", strings.Join(versionStrings, ",")),
 	}
+	if c.config.GRPCBrokerMultiplex {
+		env = append(env, fmt.Sprintf("%s=true", envMultiplexGRPC))
+	}
 
 	cmd := c.config.Cmd
 	if cmd == nil {
@@ -911,13 +921,9 @@ func (c *Client) loadServerCert(cert string) error {
 }
 
 func (c *Client) reattach() (net.Addr, error) {
-	var muxer grpcmux.GRPCMuxer
-	if c.config.Reattach.Protocol == ProtocolGRPC {
-		var err error
-		muxer, err = c.muxer(c.config.Reattach.Addr)
-		if err != nil {
-			return nil, err
-		}
+	muxer, err := c.muxer(c.config.Reattach.Addr)
+	if err != nil {
+		return nil, err
 	}
 
 	reattachFunc := c.config.Reattach.ReattachFunc
@@ -1070,12 +1076,15 @@ func netAddrDialer(addr net.Addr) func(string, time.Duration) (net.Conn, error) 
 	}
 }
 
-func (c *Client) muxer(addr net.Addr) (grpcmux.GRPCMuxer, error) {
+func (c *Client) muxer(addr net.Addr) (*grpcmux.GRPCClientMuxer, error) {
+	if c.protocol != ProtocolGRPC || !c.config.GRPCBrokerMultiplex {
+		return nil, nil
+	}
+
 	var err error
 	c.grpcMuxerOnce.Do(func() {
 		c.grpcMuxer, err = grpcmux.NewGRPCClientMuxer(c.logger, addr)
 	})
-
 	if err != nil {
 		return nil, err
 	}
@@ -1087,21 +1096,22 @@ func (c *Client) muxer(addr net.Addr) (grpcmux.GRPCMuxer, error) {
 // creates the connection to the plugin.
 func (c *Client) dialer() func(_ string, timeout time.Duration) (net.Conn, error) {
 	return func(_ string, timeout time.Duration) (net.Conn, error) {
+		muxer, err := c.muxer(c.address)
+		if err != nil {
+			return nil, err
+		}
+
 		var conn net.Conn
-		var err error
-		if c.protocol == ProtocolGRPC {
-			var muxer grpcmux.GRPCMuxer
-			muxer, err = c.muxer(c.address)
+		if muxer != nil {
+			conn, err = muxer.MainDial()
 			if err != nil {
 				return nil, err
 			}
-			conn, err = muxer.Dial(0, nil)
 		} else {
 			conn, err = netAddrDialer(c.address)("", timeout)
-		}
-
-		if err != nil {
-			return nil, err
+			if err != nil {
+				return nil, err
+			}
 		}
 
 		// If we have a TLS config we wrap our connection. We only do this

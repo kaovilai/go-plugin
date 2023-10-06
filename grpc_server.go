@@ -63,7 +63,7 @@ type GRPCServer struct {
 
 	logger hclog.Logger
 
-	muxer grpcmux.GRPCMuxer
+	muxer *grpcmux.GRPCServerMuxer
 }
 
 // ServerProtocol impl.
@@ -88,6 +88,7 @@ func (s *GRPCServer) Init() error {
 	brokerServer := newGRPCBrokerServer()
 	plugin.RegisterGRPCBrokerServer(s.server, brokerServer)
 	s.broker = newGRPCBroker(brokerServer, s.TLS, unixSocketConfigFromEnv(), nil, s.muxer)
+	s.broker.multiplex = s.muxer != nil
 	go s.broker.Run()
 
 	// Register the controller

@@ -531,7 +531,6 @@ func TestClient_reattachGRPC(t *testing.T) {
 		"use ReattachFunc": {true},
 	} {
 		t.Run(name, func(t *testing.T) {
-			t.Skip()
 			testClient_reattachGRPC(t, tc.useReattachFunc)
 		})
 	}

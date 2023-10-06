@@ -41,6 +41,8 @@ type sendErr struct {
 // connection information to/from the plugin. Implements GRPCBrokerServer and
 // streamer interfaces.
 type gRPCBrokerServer struct {
+	plugin.UnimplementedGRPCBrokerServer
+
 	// send is used to send connection info to the gRPC stream.
 	send chan *sendErr
 
@@ -272,7 +274,8 @@ type GRPCBroker struct {
 	unixSocketCfg  UnixSocketConfig
 	addrTranslator runner.AddrTranslator
 
-	muxer grpcmux.GRPCMuxer
+	multiplex bool
+	muxer     grpcmux.GRPCMuxer
 
 	sync.Mutex
 }
@@ -299,6 +302,15 @@ func newGRPCBroker(s streamer, tls *tls.Config, unixSocketCfg UnixSocketConfig, 
 //
 // This should not be called multiple times with the same ID at one time.
 func (b *GRPCBroker) Accept(id uint32) (net.Listener, error) {
+	if b.multiplex {
+		ln, err := b.muxer.Listener(id, b.listenForKnocks)
+		if err != nil {
+			return nil, err
+		}
+
+		return ln, nil
+	}
+
 	listener, err := serverListener(b.unixSocketCfg)
 	if err != nil {
 		return nil, err
@@ -332,18 +344,12 @@ func (b *GRPCBroker) Accept(id uint32) (net.Listener, error) {
 // Multiple gRPC server implementations can be registered to a single
 // AcceptAndServe call.
 func (b *GRPCBroker) AcceptAndServe(id uint32, newGRPCServer func([]grpc.ServerOption) *grpc.Server) {
-	if err := b.streamer.Send(&plugin.ConnInfo{
-		ServiceId: id,
-	}); err != nil {
-		log.Printf("[ERR] plugin: plugin AcceptAndServe streamer error: %s", err)
-		return
-	}
-
-	ln, err := b.muxer.Listener(id)
+	ln, err := b.Accept(id)
 	if err != nil {
-		log.Printf("[ERR] plugin: plugin AcceptAndServe listener error: %s", err)
+		log.Printf("[ERR] plugin: plugin acceptAndServe error: %s", err)
 		return
 	}
+	defer ln.Close()
 
 	var opts []grpc.ServerOption
 	if b.tls != nil {
@@ -358,7 +364,6 @@ func (b *GRPCBroker) AcceptAndServe(id uint32, newGRPCServer func([]grpc.ServerO
 
 	// Serve on the listener, if shutting down call GracefulStop.
 	g.Add(func() error {
-		log.Printf("Serving broker server on muxer\n")
 		return server.Serve(ln)
 	}, func(err error) {
 		server.GracefulStop()
@@ -390,9 +395,69 @@ func (b *GRPCBroker) Close() error {
 	return nil
 }
 
+func (b *GRPCBroker) listenForKnocks(ctx context.Context, id uint32) error {
+	p := b.getStream(id)
+	for {
+		select {
+		case knock := <-p.ch:
+			// Shouldn't be possible.
+			if knock.ServiceId != id {
+				return fmt.Errorf("knock received with wrong service ID; expected %d but got %d", id, knock.ServiceId)
+			}
+
+			// Also shouldn't be possible.
+			if !knock.Knock || knock.KnockAck {
+				return fmt.Errorf("knock received for service ID %d with incorrect values; knock=%v, ack=%v", id, knock.Knock, knock.KnockAck)
+			}
+
+			// Successful knock, open the door for the given ID.
+			b.muxer.AcceptKnock(id)
+
+			// Send back an acknowledgement to allow the client to start dialling.
+			err := b.streamer.Send(&plugin.ConnInfo{
+				ServiceId: id,
+				Knock:     true,
+				KnockAck:  true,
+			})
+			if err != nil {
+				return fmt.Errorf("error sending back knock acknowledgement: %w", err)
+			}
+		case <-ctx.Done():
+			return nil
+		}
+	}
+}
+
+func (b *GRPCBroker) knock(id uint32) error {
+	// Send a knock.
+	err := b.streamer.Send(&plugin.ConnInfo{
+		ServiceId: id,
+		Knock:     true,
+	})
+	if err != nil {
+		return err
+	}
+
+	// Wait for the ack.
+	p := b.getStream(id)
+	select {
+	case resp := <-p.ch:
+		if resp.ServiceId != id {
+			return fmt.Errorf("handshake failed for multiplexing on id %d; got response for %d", id, resp.ServiceId)
+		}
+		if !resp.Knock || !resp.KnockAck {
+			return fmt.Errorf("handshake failed for multiplexing on id %d; expected knock and ack, but got %v, %v", id, resp.Knock, resp.KnockAck)
+		}
+	case <-time.After(5 * time.Second):
+		return fmt.Errorf("timeout waiting for multiplexing knock handshake on id %d", id)
+	}
+
+	return nil
+}
+
 func (b *GRPCBroker) muxDial(id uint32) func(string, time.Duration) (net.Conn, error) {
 	return func(string, time.Duration) (net.Conn, error) {
-		conn, err := b.muxer.Dial(id)
+		conn, err := b.muxer.KnockAndDial(id, b.knock)
 		if err != nil {
 			return nil, err
 		}
@@ -410,7 +475,6 @@ func (b *GRPCBroker) Dial(id uint32) (conn *grpc.ClientConn, err error) {
 	p := b.getStream(id)
 	select {
 	case c = <-p.ch:
-		close(p.doneCh)
 	case <-time.After(5 * time.Second):
 		return nil, fmt.Errorf("timeout waiting for connection info")
 	}

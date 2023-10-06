@@ -1,8 +1,8 @@
 package grpcmux
 
 import (
+	"context"
 	"errors"
-	"fmt"
 	"net"
 	"time"
 
@@ -19,7 +19,7 @@ type GRPCServerMuxer struct {
 	sessionErrCh chan error
 	sess         *yamux.Session
 
-	muxCommon *muxer
+	rootMuxer *rootMuxer
 }
 
 func NewGRPCServerMuxer(logger hclog.Logger, ln net.Listener) *GRPCServerMuxer {
@@ -28,21 +28,18 @@ func NewGRPCServerMuxer(logger hclog.Logger, ln net.Listener) *GRPCServerMuxer {
 		logger: logger,
 
 		sessionErrCh: make(chan error),
-		muxCommon: &muxer{
-			logger:         logger,
-			knockCh:        make(chan int64),
-			acceptChannels: make(map[int64]chan acceptResult),
-		},
 	}
 
-	go m.acceptSessionAndMuxAccept(ln)
+	go m.acceptSession(ln)
+
+	m.rootMuxer = newRootMuxer(logger, ln.Addr(), false, m.session)
 
 	return m
 }
 
 // acceptSessionAndMuxAccept is responsible for establishing the yamux session,
 // and then kicking off the acceptLoop function.
-func (m *GRPCServerMuxer) acceptSessionAndMuxAccept(ln net.Listener) {
+func (m *GRPCServerMuxer) acceptSession(ln net.Listener) {
 	defer close(m.sessionErrCh)
 
 	m.logger.Debug("accepting initial connection")
@@ -59,7 +56,6 @@ func (m *GRPCServerMuxer) acceptSessionAndMuxAccept(ln net.Listener) {
 		return
 	}
 	m.logger.Debug("server session created")
-	go m.muxCommon.acceptLoop(m.sess)
 }
 
 func (m *GRPCServerMuxer) session() (*yamux.Session, error) {
@@ -68,7 +64,7 @@ func (m *GRPCServerMuxer) session() (*yamux.Session, error) {
 		if err != nil {
 			return nil, err
 		}
-	case <-time.After(2 * time.Second):
+	case <-time.After(5 * time.Second):
 		return nil, errors.New("timed out waiting for connection to be established")
 	}
 
@@ -80,29 +76,22 @@ func (m *GRPCServerMuxer) session() (*yamux.Session, error) {
 	return m.sess, nil
 }
 
-func (m *GRPCServerMuxer) Dial(id uint32) (net.Conn, error) {
-	sess, err := m.session()
-	if err != nil {
-		return nil, fmt.Errorf("error getting session for server Dial: %w", err)
-	}
+func (m *GRPCServerMuxer) MainListener() net.Listener {
+	return m.rootMuxer
+}
 
-	return m.muxCommon.knockAndDial(sess, id)
+func (m *GRPCServerMuxer) Listener(id uint32, listenForKnocksFn func(context.Context, uint32) error) (net.Listener, error) {
+	return m.rootMuxer.listener(id, listenForKnocksFn)
+}
+
+func (m *GRPCServerMuxer) KnockAndDial(id uint32, knockFn func(id uint32) error) (net.Conn, error) {
+	return m.rootMuxer.knockAndDial(id, knockFn)
+}
+
+func (m *GRPCServerMuxer) AcceptKnock(id uint32) {
+	m.rootMuxer.acceptKnock(id)
 }
 
 func (m *GRPCServerMuxer) Close() error {
-	m.logger.Debug("closing server muxer")
-	if m.sess != nil {
-		return m.sess.Close()
-	}
-
-	return nil
-}
-
-func (m *GRPCServerMuxer) Listener(id uint32) (net.Listener, error) {
-	sess, err := m.session()
-	if err != nil {
-		return nil, err
-	}
-
-	return m.muxCommon.listener(sess, int64(id)), nil
+	return m.rootMuxer.Close()
 }

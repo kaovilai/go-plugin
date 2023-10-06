@@ -15,7 +15,7 @@ import (
 )
 
 func TestGRPCClient_App(t *testing.T) {
-	client, server := TestPluginGRPCConn(t, map[string]Plugin{
+	client, server := TestPluginGRPCConn(t, true, map[string]Plugin{
 		"test": new(testGRPCInterfacePlugin),
 	})
 	defer client.Close()
@@ -59,7 +59,7 @@ func TestGRPCConn_BidirectionalPing(t *testing.T) {
 }
 
 func TestGRPCC_Stream(t *testing.T) {
-	client, server := TestPluginGRPCConn(t, map[string]Plugin{
+	client, server := TestPluginGRPCConn(t, false, map[string]Plugin{
 		"test": new(testGRPCInterfacePlugin),
 	})
 	defer client.Close()
@@ -87,7 +87,7 @@ func TestGRPCC_Stream(t *testing.T) {
 }
 
 func TestGRPCClient_Ping(t *testing.T) {
-	client, server := TestPluginGRPCConn(t, map[string]Plugin{
+	client, server := TestPluginGRPCConn(t, false, map[string]Plugin{
 		"test": new(testGRPCInterfacePlugin),
 	})
 	defer client.Close()
@@ -113,7 +113,7 @@ func TestGRPCClient_Ping(t *testing.T) {
 func TestGRPCClient_Reflection(t *testing.T) {
 	ctx := context.Background()
 
-	client, server := TestPluginGRPCConn(t, map[string]Plugin{
+	client, server := TestPluginGRPCConn(t, false, map[string]Plugin{
 		"test": new(testGRPCInterfacePlugin),
 	})
 	defer client.Close()

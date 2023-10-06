@@ -1,9 +1,13 @@
 package grpcmux
 
-import "net"
+import (
+	"context"
+	"net"
+)
 
 type GRPCMuxer interface {
-	Dial(id uint32) (net.Conn, error)
-	Listener(id uint32) (net.Listener, error)
+	Listener(id uint32, listenForKnocksFn func(context.Context, uint32) error) (net.Listener, error)
+	KnockAndDial(id uint32, knockFn func(uint32) error) (net.Conn, error)
+	AcceptKnock(id uint32)
 	Close() error
 }

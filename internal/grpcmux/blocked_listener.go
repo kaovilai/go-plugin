@@ -27,8 +27,7 @@ type acceptResult struct {
 	err  error
 }
 
-func newBlockedListener(addr net.Addr) *blockedListener {
-	ctx, cancel := context.WithCancel(context.Background())
+func newBlockedListener(ctx context.Context, cancel func(), addr net.Addr) *blockedListener {
 	return &blockedListener{
 		addr:     addr,
 		acceptCh: make(chan acceptResult),

@@ -20,23 +20,20 @@ func ReattachFunc(pid int, addr net.Addr, muxer grpcmux.GRPCMuxer) runner.Reatta
 		if err != nil {
 			// On Unix systems, FindProcess never returns an error.
 			// On Windows, for non-existent pids it returns:
-			// os.SyscallError - 'OpenProcess: the paremter is incorrect'
+			// os.SyscallError - 'OpenProcess: the parameter is incorrect'
 			return nil, ErrProcessNotFound
 		}
 
 		// Attempt to connect to the addr since on Unix systems FindProcess
 		// doesn't actually return an error if it can't find the process.
-		var conn net.Conn
+		// If we have a muxer though, we've already made a connection.
 		if muxer == nil {
-			conn, err = net.Dial(addr.Network(), addr.String())
+			conn, err := net.Dial(addr.Network(), addr.String())
 			if err != nil {
-				p.Kill()
+				_ = p.Kill()
 				return nil, ErrProcessNotFound
 			}
-			conn.Close()
-		} else {
-			//debug.PrintStack()
-			//conn, err = muxer.Dial()
+			_ = conn.Close()
 		}
 		return &CmdAttachedRunner{
 			pid:     pid,

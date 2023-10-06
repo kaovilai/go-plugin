@@ -135,7 +135,7 @@ func TestGRPCConn(t testing.T, register func(*grpc.Server)) (*grpc.ClientConn, *
 
 // TestPluginGRPCConn returns a plugin gRPC client and server that are connected
 // together and configured. This is used to test gRPC connections.
-func TestPluginGRPCConn(t testing.T, ps map[string]Plugin) (*GRPCClient, *GRPCServer) {
+func TestPluginGRPCConn(t testing.T, multiplex bool, ps map[string]Plugin) (*GRPCClient, *GRPCServer) {
 	// Create a listener
 	ln, err := serverListener(UnixSocketConfig{})
 	if err != nil {
@@ -147,7 +147,11 @@ func TestPluginGRPCConn(t testing.T, ps map[string]Plugin) (*GRPCClient, *GRPCSe
 	})
 
 	// Start up the server
-	muxer := grpcmux.NewGRPCServerMuxer(logger.Named("test-server-muxer"), ln)
+	var muxer *grpcmux.GRPCServerMuxer
+	if multiplex {
+		muxer = grpcmux.NewGRPCServerMuxer(logger, ln)
+		ln = muxer.MainListener()
+	}
 	server := &GRPCServer{
 		Plugins: ps,
 		DoneCh:  make(chan struct{}),
@@ -160,7 +164,7 @@ func TestPluginGRPCConn(t testing.T, ps map[string]Plugin) (*GRPCClient, *GRPCSe
 	if err := server.Init(); err != nil {
 		t.Fatalf("err: %s", err)
 	}
-	go server.Serve(muxer)
+	go server.Serve(ln)
 
 	client := &Client{
 		address:  ln.Addr(),
