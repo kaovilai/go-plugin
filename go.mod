@@ -2,8 +2,6 @@ module github.com/hashicorp/go-plugin
 
 go 1.17
 
-replace github.com/hashicorp/yamux => ../yamux
-
 require (
 	github.com/golang/protobuf v1.5.0
 	github.com/hashicorp/go-hclog v0.14.1

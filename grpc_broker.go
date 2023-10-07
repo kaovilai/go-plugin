@@ -282,6 +282,7 @@ type GRPCBroker struct {
 
 type gRPCBrokerPending struct {
 	ch     chan *plugin.ConnInfo
+	ackCh  chan *plugin.ConnInfo
 	doneCh chan struct{}
 }
 
@@ -441,7 +442,7 @@ func (b *GRPCBroker) knock(id uint32) error {
 	// Wait for the ack.
 	p := b.getStream(id)
 	select {
-	case resp := <-p.ch:
+	case resp := <-p.ackCh:
 		if resp.ServiceId != id {
 			return fmt.Errorf("handshake failed for multiplexing on id %d; got response for %d", id, resp.ServiceId)
 		}
@@ -468,20 +469,21 @@ func (b *GRPCBroker) muxDial(id uint32) func(string, time.Duration) (net.Conn, e
 
 // Dial opens a connection by ID.
 func (b *GRPCBroker) Dial(id uint32) (conn *grpc.ClientConn, err error) {
+	log.Printf("dialling gRPC broker stream ID: %d\n", id)
+
+	// Muxed connection.
+	if b.multiplex {
+		return dialGRPCConn(b.tls, b.muxDial(id))
+	}
+
 	var c *plugin.ConnInfo
 
-	log.Printf("dialling gRPC broker stream ID: %d\n", id)
 	// Open the stream
 	p := b.getStream(id)
 	select {
 	case c = <-p.ch:
 	case <-time.After(5 * time.Second):
 		return nil, fmt.Errorf("timeout waiting for connection info")
-	}
-
-	if c.Network == "" && c.Address == "" {
-		// Muxed connection.
-		return dialGRPCConn(b.tls, b.muxDial(c.ServiceId))
 	}
 
 	network, address := c.Network, c.Address
@@ -532,12 +534,14 @@ func (m *GRPCBroker) Run() {
 
 		// Initialize the waiter
 		p := m.getStream(stream.ServiceId)
+		ch := p.ch
+		if stream.KnockAck {
+			ch = p.ackCh
+		}
 		select {
-		case p.ch <- stream:
+		case ch <- stream:
 		default:
 		}
-
-		go m.timeoutWait(stream.ServiceId, p)
 	}
 }
 
@@ -552,22 +556,8 @@ func (m *GRPCBroker) getStream(id uint32) *gRPCBrokerPending {
 
 	m.streams[id] = &gRPCBrokerPending{
 		ch:     make(chan *plugin.ConnInfo, 1),
+		ackCh:  make(chan *plugin.ConnInfo, 1),
 		doneCh: make(chan struct{}),
 	}
 	return m.streams[id]
-}
-
-func (m *GRPCBroker) timeoutWait(id uint32, p *gRPCBrokerPending) {
-	// Wait for the stream to either be picked up and connected, or
-	// for a timeout.
-	select {
-	case <-p.doneCh:
-	case <-time.After(5 * time.Second):
-	}
-
-	m.Lock()
-	defer m.Unlock()
-
-	// Delete the stream so no one else can grab it
-	delete(m.streams, id)
 }

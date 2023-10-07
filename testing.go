@@ -170,7 +170,8 @@ func TestPluginGRPCConn(t testing.T, multiplex bool, ps map[string]Plugin) (*GRP
 		address:  ln.Addr(),
 		protocol: ProtocolGRPC,
 		config: &ClientConfig{
-			Plugins: ps,
+			Plugins:             ps,
+			GRPCBrokerMultiplex: multiplex,
 		},
 		logger: logger,
 	}

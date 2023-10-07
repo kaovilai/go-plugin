@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"github.com/hashicorp/go-hclog"
 	"github.com/hashicorp/yamux"
+	"io"
 	"net"
 	"sync"
 )
@@ -42,7 +43,7 @@ func newRootMuxer(logger hclog.Logger, addr net.Addr, isClient bool, sessionFn f
 	if isClient {
 		go func() {
 			_, err := m.Accept()
-			if err != nil {
+			if err != nil && err != io.EOF {
 				m.logger.Error("received error in client mux Accept loop", "error", err)
 			}
 		}()
@@ -71,13 +72,16 @@ func (m *rootMuxer) Accept() (net.Conn, error) {
 				}
 				return nil, fmt.Errorf("received knock on ID %d that doesn't have a listener", id)
 			}
-			m.logger.Debug("sending conn to brokered listener", "id", id)
+			m.logger.Debug("sending conn to brokered listener", "client", m.isClient, "id", id)
 			acceptCh <- acceptResult{
 				conn: stream,
 				err:  acceptErr,
 			}
 		default:
 			if m.isClient {
+				if acceptErr != nil {
+					return nil, err
+				}
 				m.logger.Error("accepted new stream without a knock handshake")
 				continue
 			} else {
@@ -132,13 +136,13 @@ func (m *rootMuxer) knockAndDial(id uint32, knockFn func(id uint32) error) (net.
 		return nil, fmt.Errorf("failed to knock before dialling client: %w", err)
 	}
 
-	m.logger.Debug("dialling new server stream...")
+	m.logger.Debug("dialling new stream...", "client", m.isClient)
 	stream, err := sess.OpenStream()
 	if err != nil {
-		return nil, fmt.Errorf("error dialling new server stream: %w", err)
+		return nil, fmt.Errorf("error dialling new stream: %w", err)
 	}
 
-	m.logger.Debug("dialled new server stream", "id", stream.StreamID())
+	m.logger.Debug("dialled new stream", "client", m.isClient, "id", stream.StreamID())
 	return stream, nil
 }
 
@@ -152,7 +156,7 @@ func (m *rootMuxer) listener(id uint32, listenForKnocksFn func(context.Context, 
 	go func() {
 		err := listenForKnocksFn(ctx, id)
 		if err != nil {
-			m.logger.Error("error listening for knocks", "id", id, "error", err)
+			m.logger.Error("error listening for knocks", "client", m.isClient, "id", id, "error", err)
 		}
 	}()
 	ln := newBlockedListener(ctx, cancel, sess.Addr())
