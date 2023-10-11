@@ -390,7 +390,7 @@ func Serve(opts *ServeConfig) {
 	case ProtocolGRPC:
 		var muxer *grpcmux.GRPCServerMuxer
 		if multiplex := os.Getenv(envMultiplexGRPC); multiplex == "true" || multiplex == "1" {
-			muxer := grpcmux.NewGRPCServerMuxer(logger, listener)
+			muxer = grpcmux.NewGRPCServerMuxer(logger, listener)
 			listener = muxer.MainListener()
 		}
 
