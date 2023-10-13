@@ -246,6 +246,7 @@ type ClientConfig struct {
 	// listener socket instead of making a new listener for each server. The
 	// go-plugin library currently only includes a Go implementation for the
 	// server (i.e. plugin) side of gRPC broker multiplexing.
+	// Does not support reattaching.
 	GRPCBrokerMultiplex bool
 
 	// SkipHostEnv allows plugins to run without inheriting the parent process'
@@ -582,6 +583,10 @@ func (c *Client) Start() (addr net.Addr, err error) {
 
 		if c.config.SecureConfig != nil && c.config.Reattach != nil {
 			return nil, ErrSecureConfigAndReattach
+		}
+
+		if c.config.GRPCBrokerMultiplex && c.config.Reattach != nil {
+			return nil, fmt.Errorf("gRPC broker multiplexing is not supported with Reattach config")
 		}
 	}
 
@@ -921,15 +926,10 @@ func (c *Client) loadServerCert(cert string) error {
 }
 
 func (c *Client) reattach() (net.Addr, error) {
-	muxer, err := c.muxer(c.config.Reattach.Addr)
-	if err != nil {
-		return nil, err
-	}
-
 	reattachFunc := c.config.Reattach.ReattachFunc
 	// For backwards compatibility default to cmdrunner.ReattachFunc
 	if reattachFunc == nil {
-		reattachFunc = cmdrunner.ReattachFunc(c.config.Reattach.Pid, c.config.Reattach.Addr, muxer)
+		reattachFunc = cmdrunner.ReattachFunc(c.config.Reattach.Pid, c.config.Reattach.Addr)
 	}
 
 	r, err := reattachFunc()
@@ -1102,7 +1102,7 @@ func (c *Client) dialer() func(_ string, timeout time.Duration) (net.Conn, error
 		}
 
 		var conn net.Conn
-		if muxer != nil {
+		if muxer.Enabled() {
 			conn, err = muxer.MainDial()
 			if err != nil {
 				return nil, err
