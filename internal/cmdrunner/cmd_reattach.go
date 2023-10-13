@@ -27,7 +27,7 @@ func ReattachFunc(pid int, addr net.Addr, muxer grpcmux.GRPCMuxer) runner.Reatta
 		// Attempt to connect to the addr since on Unix systems FindProcess
 		// doesn't actually return an error if it can't find the process.
 		// If we have a muxer though, we've already made a connection.
-		if muxer == nil {
+		if !muxer.Enabled() {
 			conn, err := net.Dial(addr.Network(), addr.String())
 			if err != nil {
 				_ = p.Kill()

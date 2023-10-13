@@ -296,6 +296,7 @@ func newGRPCBroker(s streamer, tls *tls.Config, unixSocketCfg UnixSocketConfig, 
 		unixSocketCfg:  unixSocketCfg,
 		addrTranslator: addrTranslator,
 		muxer:          muxer,
+		multiplex:      muxer.Enabled(),
 	}
 }
 
@@ -400,25 +401,32 @@ func (b *GRPCBroker) listenForKnocks(ctx context.Context, id uint32) error {
 	p := b.getStream(id)
 	for {
 		select {
-		case knock := <-p.ch:
+		case msg := <-p.ch:
 			// Shouldn't be possible.
-			if knock.ServiceId != id {
-				return fmt.Errorf("knock received with wrong service ID; expected %d but got %d", id, knock.ServiceId)
+			if msg.ServiceId != id {
+				return fmt.Errorf("knock received with wrong service ID; expected %d but got %d", id, msg.ServiceId)
 			}
 
 			// Also shouldn't be possible.
-			if !knock.Knock || knock.KnockAck {
-				return fmt.Errorf("knock received for service ID %d with incorrect values; knock=%v, ack=%v", id, knock.Knock, knock.KnockAck)
+			if !msg.Knock.Knock || msg.Knock.Ack {
+				return fmt.Errorf("knock received for service ID %d with incorrect values; knock=%v, ack=%v", id, msg.Knock.Knock, msg.Knock.Ack)
 			}
 
 			// Successful knock, open the door for the given ID.
-			b.muxer.AcceptKnock(id)
+			var ackError string
+			err := b.muxer.AcceptKnock(id)
+			if err != nil {
+				ackError = err.Error()
+			}
 
 			// Send back an acknowledgement to allow the client to start dialling.
-			err := b.streamer.Send(&plugin.ConnInfo{
+			err = b.streamer.Send(&plugin.ConnInfo{
 				ServiceId: id,
-				Knock:     true,
-				KnockAck:  true,
+				Knock: &plugin.ConnInfo_Knock{
+					Knock: true,
+					Ack:   true,
+					Error: ackError,
+				},
 			})
 			if err != nil {
 				return fmt.Errorf("error sending back knock acknowledgement: %w", err)
@@ -433,7 +441,9 @@ func (b *GRPCBroker) knock(id uint32) error {
 	// Send a knock.
 	err := b.streamer.Send(&plugin.ConnInfo{
 		ServiceId: id,
-		Knock:     true,
+		Knock: &plugin.ConnInfo_Knock{
+			Knock: true,
+		},
 	})
 	if err != nil {
 		return err
@@ -442,12 +452,15 @@ func (b *GRPCBroker) knock(id uint32) error {
 	// Wait for the ack.
 	p := b.getStream(id)
 	select {
-	case resp := <-p.ackCh:
-		if resp.ServiceId != id {
-			return fmt.Errorf("handshake failed for multiplexing on id %d; got response for %d", id, resp.ServiceId)
+	case msg := <-p.ackCh:
+		if msg.ServiceId != id {
+			return fmt.Errorf("handshake failed for multiplexing on id %d; got response for %d", id, msg.ServiceId)
 		}
-		if !resp.Knock || !resp.KnockAck {
-			return fmt.Errorf("handshake failed for multiplexing on id %d; expected knock and ack, but got %v, %v", id, resp.Knock, resp.KnockAck)
+		if !msg.Knock.Knock || !msg.Knock.Ack {
+			return fmt.Errorf("handshake failed for multiplexing on id %d; expected knock and ack, but got %v, %v", id, msg.Knock.Knock, msg.Knock.Ack)
+		}
+		if msg.Knock.Error != "" {
+			return fmt.Errorf("failed to knock for id %d: %s", id, msg.Knock.Error)
 		}
 	case <-time.After(5 * time.Second):
 		return fmt.Errorf("timeout waiting for multiplexing knock handshake on id %d", id)
@@ -535,7 +548,7 @@ func (m *GRPCBroker) Run() {
 		// Initialize the waiter
 		p := m.getStream(stream.ServiceId)
 		ch := p.ch
-		if stream.KnockAck {
+		if stream.Knock != nil && stream.Knock.Ack {
 			ch = p.ackCh
 		}
 		select {

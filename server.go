@@ -391,7 +391,7 @@ func Serve(opts *ServeConfig) {
 		var muxer *grpcmux.GRPCServerMuxer
 		if multiplex := os.Getenv(envMultiplexGRPC); multiplex == "true" || multiplex == "1" {
 			muxer = grpcmux.NewGRPCServerMuxer(logger, listener)
-			listener = muxer.MainListener()
+			listener = muxer
 		}
 
 		// Create the gRPC server

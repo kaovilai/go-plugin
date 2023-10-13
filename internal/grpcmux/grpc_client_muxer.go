@@ -2,16 +2,23 @@ package grpcmux
 
 import (
 	"context"
+	"fmt"
 	"github.com/hashicorp/go-hclog"
 	"github.com/hashicorp/yamux"
 	"net"
+	"sync"
 )
 
 var _ GRPCMuxer = (*GRPCClientMuxer)(nil)
 
 type GRPCClientMuxer struct {
-	logger hclog.Logger
-	mux    *rootMuxer
+	logger  hclog.Logger
+	session *yamux.Session
+
+	acceptMutex     sync.Mutex
+	acceptListeners map[uint32]*blockedClientListener
+
+	dialMutex sync.Mutex
 }
 
 func NewGRPCClientMuxer(logger hclog.Logger, addr net.Addr) (*GRPCClientMuxer, error) {
@@ -33,34 +40,69 @@ func NewGRPCClientMuxer(logger hclog.Logger, addr net.Addr) (*GRPCClientMuxer, e
 
 	logger.Debug("client muxer connected", "addr", addr)
 	m := &GRPCClientMuxer{
-		logger: logger,
-		mux: newRootMuxer(logger, addr, true, func() (*yamux.Session, error) {
-			return sess, nil
-		}),
+		logger:          logger,
+		session:         sess,
+		acceptListeners: make(map[uint32]*blockedClientListener),
 	}
 
 	return m, nil
 }
 
 func (m *GRPCClientMuxer) MainDial() (net.Conn, error) {
-	return m.mux.dial()
+	m.dialMutex.Lock()
+	defer m.dialMutex.Unlock()
+
+	return m.session.Open()
+}
+
+func (m *GRPCClientMuxer) Enabled() bool {
+	return m != nil
 }
 
 func (m *GRPCClientMuxer) Listener(id uint32, listenForKnocksFn func(context.Context, uint32) error) (net.Listener, error) {
-	m.logger.Debug("accepting new client stream...")
-	return m.mux.listener(id, listenForKnocksFn)
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		err := listenForKnocksFn(ctx, id)
+		if err != nil {
+			m.logger.Error("error listening for knocks", "id", id, "error", err)
+		}
+	}()
+	ln := newBlockedClientListener(ctx, cancel, m.session)
+
+	m.acceptMutex.Lock()
+	m.acceptListeners[id] = ln
+	m.acceptMutex.Unlock()
+
+	return ln, nil
 }
 
 func (m *GRPCClientMuxer) KnockAndDial(id uint32, knockFn func(id uint32) error) (net.Conn, error) {
-	m.logger.Debug("dialling new client stream...")
-	return m.mux.knockAndDial(id, knockFn)
+	m.dialMutex.Lock()
+	defer m.dialMutex.Unlock()
+
+	// Tell the client the gRPC broker ID it should map the next stream to.
+	err := knockFn(id)
+	if err != nil {
+		return nil, fmt.Errorf("failed to knock before dialling client: %w", err)
+	}
+
+	conn, err := m.session.Open()
+	if err != nil {
+		return nil, fmt.Errorf("error dialling new stream: %w", err)
+	}
+
+	return conn, nil
 }
 
-func (m *GRPCClientMuxer) AcceptKnock(id uint32) {
-	m.mux.acceptKnock(id)
+func (m *GRPCClientMuxer) AcceptKnock(id uint32) error {
+	ln, ok := m.acceptListeners[id]
+	if !ok {
+		return fmt.Errorf("no listener for id %d", id)
+	}
+	ln.unblock()
+	return nil
 }
 
 func (m *GRPCClientMuxer) Close() error {
-	m.logger.Debug("closing client muxer")
-	return m.mux.Close()
+	return m.session.Close()
 }

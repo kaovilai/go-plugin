@@ -150,7 +150,7 @@ func TestPluginGRPCConn(t testing.T, multiplex bool, ps map[string]Plugin) (*GRP
 	var muxer *grpcmux.GRPCServerMuxer
 	if multiplex {
 		muxer = grpcmux.NewGRPCServerMuxer(logger, ln)
-		ln = muxer.MainListener()
+		ln = muxer
 	}
 	server := &GRPCServer{
 		Plugins: ps,
