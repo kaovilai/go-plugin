@@ -11,10 +11,11 @@ import (
 	"net"
 	"time"
 
-	"github.com/hashicorp/go-plugin/internal/plugin"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/health/grpc_health_v1"
+
+	"github.com/hashicorp/go-plugin/internal/plugin"
 )
 
 func dialGRPCConn(tls *tls.Config, dialer func(string, time.Duration) (net.Conn, error), dialOpts ...grpc.DialOption) (*grpc.ClientConn, error) {
@@ -38,9 +39,7 @@ func dialGRPCConn(tls *tls.Config, dialer func(string, time.Duration) (net.Conn,
 
 	opts = append(opts,
 		grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(math.MaxInt32)),
-		grpc.WithDefaultCallOptions(grpc.MaxCallSendMsgSize(math.MaxInt32)),
-		// grpc.WithBlock(),
-	)
+		grpc.WithDefaultCallOptions(grpc.MaxCallSendMsgSize(math.MaxInt32)))
 
 	// Add our custom options if we have any
 	opts = append(opts, dialOpts...)
@@ -58,12 +57,12 @@ func dialGRPCConn(tls *tls.Config, dialer func(string, time.Duration) (net.Conn,
 // newGRPCClient creates a new GRPCClient. The Client argument is expected
 // to be successfully started already with a lock held.
 func newGRPCClient(doneCtx context.Context, c *Client) (*GRPCClient, error) {
-	conn, err := dialGRPCConn(c.config.TLSConfig, c.dialer(), c.config.GRPCDialOptions...)
+	conn, err := dialGRPCConn(c.config.TLSConfig, c.dialer, c.config.GRPCDialOptions...)
 	if err != nil {
 		return nil, err
 	}
 
-	muxer, err := c.muxer(c.address)
+	muxer, err := c.getGRPCMuxer(c.address)
 	if err != nil {
 		return nil, err
 	}

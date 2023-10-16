@@ -14,6 +14,21 @@ import (
 var _ GRPCMuxer = (*GRPCServerMuxer)(nil)
 var _ net.Listener = (*GRPCServerMuxer)(nil)
 
+// GRPCServerMuxer implements the server (plugin) side of the gRPC broker's
+// GRPCMuxer interface for multiplexing multiple gRPC broker connections over
+// a single net.Conn.
+//
+// The server side needs a listener to serve the gRPC broker's control services,
+// which includes the service we will receive knocks on. That means we always
+// accept the first connection onto a "default" main listener, and if we accept
+// any further connections without receiving a knock first, they are also given
+// to the default listener.
+//
+// When creating additional multiplexed listeners for specific stream IDs, we
+// can't control the order in which gRPC servers will call Accept() on each
+// listener, but we do need to control which gRPC server accepts which connection.
+// As such, each multiplexed listener blocks waiting on a channel. It will be
+// unblocked when a knock is received for the matching stream ID.
 type GRPCServerMuxer struct {
 	addr   net.Addr
 	logger hclog.Logger
@@ -50,7 +65,7 @@ func NewGRPCServerMuxer(logger hclog.Logger, ln net.Listener) *GRPCServerMuxer {
 func (m *GRPCServerMuxer) acceptSession(ln net.Listener) {
 	defer close(m.sessionErrCh)
 
-	m.logger.Debug("accepting initial connection")
+	m.logger.Debug("accepting initial connection", "addr", m.addr)
 	conn, err := ln.Accept()
 	if err != nil {
 		m.sessionErrCh <- err
@@ -58,12 +73,15 @@ func (m *GRPCServerMuxer) acceptSession(ln net.Listener) {
 	}
 
 	m.logger.Debug("initial server connection accepted", "addr", m.addr)
-	m.sess, err = yamux.Server(conn, nil)
+	cfg := yamux.DefaultConfig()
+	cfg.Logger = m.logger.Named("yamux").StandardLogger(&hclog.StandardLoggerOptions{
+		InferLevels: true,
+	})
+	m.sess, err = yamux.Server(conn, cfg)
 	if err != nil {
 		m.sessionErrCh <- err
 		return
 	}
-	m.logger.Debug("server session created")
 }
 
 func (m *GRPCServerMuxer) session() (*yamux.Session, error) {

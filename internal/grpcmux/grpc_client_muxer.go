@@ -2,14 +2,26 @@ package grpcmux
 
 import (
 	"fmt"
-	"github.com/hashicorp/go-hclog"
-	"github.com/hashicorp/yamux"
 	"net"
 	"sync"
+
+	"github.com/hashicorp/go-hclog"
+	"github.com/hashicorp/yamux"
 )
 
 var _ GRPCMuxer = (*GRPCClientMuxer)(nil)
 
+// GRPCClientMuxer implements the client (host) side of the gRPC broker's
+// GRPCMuxer interface for multiplexing multiple gRPC broker connections over
+// a single net.Conn.
+//
+// The client dials the initial net.Conn eagerly, and creates a yamux.Session
+// as the implementation for multiplexing any additional connections.
+//
+// Each net.Listener returned from Listener will block until the client receives
+// a knock that matches its gRPC broker stream ID. There is no default listener
+// on the client, as it is a client for the gRPC broker's control services. (See
+// GRPCServerMuxer for more details).
 type GRPCClientMuxer struct {
 	logger  hclog.Logger
 	session *yamux.Session
@@ -22,7 +34,7 @@ type GRPCClientMuxer struct {
 
 func NewGRPCClientMuxer(logger hclog.Logger, addr net.Addr) (*GRPCClientMuxer, error) {
 	// Eagerly establish the underlying connection as early as possible.
-	logger.Debug("making new client mux initial connection")
+	logger.Debug("making new client mux initial connection", "addr", addr)
 	conn, err := net.Dial(addr.Network(), addr.String())
 	if err != nil {
 		return nil, err
@@ -32,7 +44,11 @@ func NewGRPCClientMuxer(logger hclog.Logger, addr net.Addr) (*GRPCClientMuxer, e
 		_ = tcpConn.SetKeepAlive(true)
 	}
 
-	sess, err := yamux.Client(conn, nil)
+	cfg := yamux.DefaultConfig()
+	cfg.Logger = logger.Named("yamux").StandardLogger(&hclog.StandardLoggerOptions{
+		InferLevels: true,
+	})
+	sess, err := yamux.Client(conn, cfg)
 	if err != nil {
 		return nil, err
 	}

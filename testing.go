@@ -6,12 +6,12 @@ package plugin
 import (
 	"bytes"
 	"context"
-	"github.com/hashicorp/go-plugin/internal/grpcmux"
 	"io"
 	"net"
 	"net/rpc"
 
 	hclog "github.com/hashicorp/go-hclog"
+	"github.com/hashicorp/go-plugin/internal/grpcmux"
 	"github.com/mitchellh/go-testing-interface"
 	"google.golang.org/grpc"
 )

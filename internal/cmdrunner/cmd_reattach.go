@@ -6,9 +6,10 @@ package cmdrunner
 import (
 	"context"
 	"fmt"
-	"github.com/hashicorp/go-plugin/runner"
 	"net"
 	"os"
+
+	"github.com/hashicorp/go-plugin/runner"
 )
 
 // ReattachFunc returns a function that allows reattaching to a plugin running
@@ -19,7 +20,7 @@ func ReattachFunc(pid int, addr net.Addr) runner.ReattachFunc {
 		if err != nil {
 			// On Unix systems, FindProcess never returns an error.
 			// On Windows, for non-existent pids it returns:
-			// os.SyscallError - 'OpenProcess: the parameter is incorrect'
+			// os.SyscallError - 'OpenProcess: the paremter is incorrect'
 			return nil, ErrProcessNotFound
 		}
 
@@ -27,10 +28,10 @@ func ReattachFunc(pid int, addr net.Addr) runner.ReattachFunc {
 		// doesn't actually return an error if it can't find the process.
 		conn, err := net.Dial(addr.Network(), addr.String())
 		if err != nil {
-			_ = p.Kill()
+			p.Kill()
 			return nil, ErrProcessNotFound
 		}
-		_ = conn.Close()
+		conn.Close()
 
 		return &CmdAttachedRunner{
 			pid:     pid,

@@ -12,7 +12,6 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
-	"github.com/hashicorp/go-plugin/internal/grpcmux"
 	"hash"
 	"io"
 	"io/ioutil"
@@ -28,6 +27,7 @@ import (
 
 	"github.com/hashicorp/go-hclog"
 	"github.com/hashicorp/go-plugin/internal/cmdrunner"
+	"github.com/hashicorp/go-plugin/internal/grpcmux"
 	"github.com/hashicorp/go-plugin/runner"
 	"google.golang.org/grpc"
 )
@@ -246,7 +246,12 @@ type ClientConfig struct {
 	// listener socket instead of making a new listener for each server. The
 	// go-plugin library currently only includes a Go implementation for the
 	// server (i.e. plugin) side of gRPC broker multiplexing.
+	//
 	// Does not support reattaching.
+	//
+	// Multiplexed gRPC streams MUST be established sequentially, i.e. after
+	// calling AcceptAndServe from one side, wait for the other side to Dial
+	// before calling AcceptAndServe again.
 	GRPCBrokerMultiplex bool
 
 	// SkipHostEnv allows plugins to run without inheriting the parent process'
@@ -1076,7 +1081,7 @@ func netAddrDialer(addr net.Addr) func(string, time.Duration) (net.Conn, error) 
 	}
 }
 
-func (c *Client) muxer(addr net.Addr) (*grpcmux.GRPCClientMuxer, error) {
+func (c *Client) getGRPCMuxer(addr net.Addr) (*grpcmux.GRPCClientMuxer, error) {
 	if c.protocol != ProtocolGRPC || !c.config.GRPCBrokerMultiplex {
 		return nil, nil
 	}
@@ -1094,34 +1099,32 @@ func (c *Client) muxer(addr net.Addr) (*grpcmux.GRPCClientMuxer, error) {
 
 // dialerDirect returns a function that is compatible with grpc.WithDialer and
 // creates the connection to the plugin.
-func (c *Client) dialer() func(_ string, timeout time.Duration) (net.Conn, error) {
-	return func(_ string, timeout time.Duration) (net.Conn, error) {
-		muxer, err := c.muxer(c.address)
+func (c *Client) dialer(_ string, timeout time.Duration) (net.Conn, error) {
+	muxer, err := c.getGRPCMuxer(c.address)
+	if err != nil {
+		return nil, err
+	}
+
+	var conn net.Conn
+	if muxer.Enabled() {
+		conn, err = muxer.MainDial()
 		if err != nil {
 			return nil, err
 		}
-
-		var conn net.Conn
-		if muxer.Enabled() {
-			conn, err = muxer.MainDial()
-			if err != nil {
-				return nil, err
-			}
-		} else {
-			conn, err = netAddrDialer(c.address)("", timeout)
-			if err != nil {
-				return nil, err
-			}
+	} else {
+		conn, err = netAddrDialer(c.address)("", timeout)
+		if err != nil {
+			return nil, err
 		}
-
-		// If we have a TLS config we wrap our connection. We only do this
-		// for net/rpc since gRPC uses its own mechanism for TLS.
-		if c.protocol == ProtocolNetRPC && c.config.TLSConfig != nil {
-			conn = tls.Client(conn, c.config.TLSConfig)
-		}
-
-		return conn, nil
 	}
+
+	// If we have a TLS config we wrap our connection. We only do this
+	// for net/rpc since gRPC uses its own mechanism for TLS.
+	if c.protocol == ProtocolNetRPC && c.config.TLSConfig != nil {
+		conn = tls.Client(conn, c.config.TLSConfig)
+	}
+
+	return conn, nil
 }
 
 var stdErrBufferSize = 64 * 1024

@@ -8,11 +8,11 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
-	"github.com/hashicorp/go-plugin/internal/grpcmux"
 	"io"
 	"net"
 
 	hclog "github.com/hashicorp/go-hclog"
+	"github.com/hashicorp/go-plugin/internal/grpcmux"
 	"github.com/hashicorp/go-plugin/internal/plugin"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"

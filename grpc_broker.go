@@ -8,13 +8,13 @@ import (
 	"crypto/tls"
 	"errors"
 	"fmt"
-	"github.com/hashicorp/go-plugin/internal/grpcmux"
 	"log"
 	"net"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/hashicorp/go-plugin/internal/grpcmux"
 	"github.com/hashicorp/go-plugin/internal/plugin"
 	"github.com/hashicorp/go-plugin/runner"
 
@@ -264,13 +264,14 @@ func (s *gRPCBrokerClientImpl) Close() {
 // new streams. This is useful for complex args and return values,
 // or anything else you might need a data stream for.
 type GRPCBroker struct {
-	nextId        uint32
-	streamer      streamer
+	nextId   uint32
+	streamer streamer
+	tls      *tls.Config
+	doneCh   chan struct{}
+	o        sync.Once
+
 	clientStreams map[uint32]*gRPCBrokerPending
 	serverStreams map[uint32]*gRPCBrokerPending
-	tls           *tls.Config
-	doneCh        chan struct{}
-	o             sync.Once
 
 	unixSocketCfg  UnixSocketConfig
 	addrTranslator runner.AddrTranslator
@@ -288,15 +289,16 @@ type gRPCBrokerPending struct {
 
 func newGRPCBroker(s streamer, tls *tls.Config, unixSocketCfg UnixSocketConfig, addrTranslator runner.AddrTranslator, muxer grpcmux.GRPCMuxer) *GRPCBroker {
 	return &GRPCBroker{
-		streamer:      s,
+		streamer: s,
+		tls:      tls,
+		doneCh:   make(chan struct{}),
+
 		clientStreams: make(map[uint32]*gRPCBrokerPending),
 		serverStreams: make(map[uint32]*gRPCBrokerPending),
-		tls:           tls,
-		doneCh:        make(chan struct{}),
+		muxer:         muxer,
 
 		unixSocketCfg:  unixSocketCfg,
 		addrTranslator: addrTranslator,
-		muxer:          muxer,
 	}
 }
 
@@ -314,6 +316,8 @@ func (b *GRPCBroker) Accept(id uint32) (net.Listener, error) {
 		ln = &rmListener{
 			Listener: ln,
 			close: func() error {
+				// We could have multiple listeners on the same ID, so use sync.Once
+				// for closing doneCh to ensure we don't get a panic.
 				p.once.Do(func() {
 					close(p.doneCh)
 				})
@@ -428,8 +432,8 @@ func (b *GRPCBroker) listenForKnocks(id uint32) error {
 			}
 
 			// Also shouldn't be possible.
-			if !msg.Knock.Knock || msg.Knock.Ack {
-				return fmt.Errorf("knock received for service ID %d with incorrect values; knock=%v, ack=%v", id, msg.Knock.Knock, msg.Knock.Ack)
+			if msg.Knock == nil || !msg.Knock.Knock || msg.Knock.Ack {
+				return fmt.Errorf("knock received for service ID %d with incorrect values; knock=%+v", id, msg.Knock)
 			}
 
 			// Successful knock, open the door for the given ID.
@@ -476,8 +480,8 @@ func (b *GRPCBroker) knock(id uint32) error {
 		if msg.ServiceId != id {
 			return fmt.Errorf("handshake failed for multiplexing on id %d; got response for %d", id, msg.ServiceId)
 		}
-		if !msg.Knock.Knock || !msg.Knock.Ack {
-			return fmt.Errorf("handshake failed for multiplexing on id %d; expected knock and ack, but got %v, %v", id, msg.Knock.Knock, msg.Knock.Ack)
+		if msg.Knock == nil || !msg.Knock.Knock || !msg.Knock.Ack {
+			return fmt.Errorf("handshake failed for multiplexing on id %d; expected knock and ack, but got %+v", id, msg.Knock)
 		}
 		if msg.Knock.Error != "" {
 			return fmt.Errorf("failed to knock for id %d: %s", id, msg.Knock.Error)
@@ -565,7 +569,7 @@ func (m *GRPCBroker) Run() {
 
 		// Initialize the waiter
 		var p *gRPCBrokerPending
-		if msg.Knock != nil && !msg.Knock.Ack {
+		if msg.Knock != nil && msg.Knock.Knock && !msg.Knock.Ack {
 			p = m.getServerStream(msg.ServiceId)
 			// The server side doesn't close the channel immediately as it needs
 			// to continuously listen for knocks.

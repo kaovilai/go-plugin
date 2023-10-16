@@ -10,7 +10,6 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
-	"github.com/hashicorp/go-plugin/internal/grpcmux"
 	"io"
 	"net"
 	"os"
@@ -22,6 +21,7 @@ import (
 	"strings"
 
 	hclog "github.com/hashicorp/go-hclog"
+	"github.com/hashicorp/go-plugin/internal/grpcmux"
 	"google.golang.org/grpc"
 )
 
@@ -512,12 +512,11 @@ func Serve(opts *ServeConfig) {
 }
 
 func serverListener(unixSocketCfg UnixSocketConfig) (net.Listener, error) {
-	switch {
-	case runtime.GOOS == "windows":
+	if runtime.GOOS == "windows" {
 		return serverListener_tcp()
-	default:
-		return serverListener_unix(unixSocketCfg)
 	}
+
+	return serverListener_unix(unixSocketCfg)
 }
 
 func serverListener_tcp() (net.Listener, error) {
@@ -594,12 +593,7 @@ func serverListener_unix(unixSocketCfg UnixSocketConfig) (net.Listener, error) {
 
 	// Wrap the listener in rmListener so that the Unix domain socket file
 	// is removed on close.
-	return &rmListener{
-		Listener: l,
-		close: func() error {
-			return os.Remove(path)
-		},
-	}, nil
+	return newDeleteFileListener(l, path), nil
 }
 
 func setGroupWritable(path, groupString string, mode os.FileMode) error {
@@ -631,10 +625,19 @@ func setGroupWritable(path, groupString string, mode os.FileMode) error {
 // rmListener is an implementation of net.Listener that forwards most
 // calls to the listener but also calls an additional close function. We
 // use this to cleanup the unix domain socket on close, as well as clean
-// up multplexed listeners.
+// up multiplexed listeners.
 type rmListener struct {
 	net.Listener
 	close func() error
+}
+
+func newDeleteFileListener(ln net.Listener, path string) *rmListener {
+	return &rmListener{
+		Listener: ln,
+		close: func() error {
+			return os.Remove(path)
+		},
+	}
 }
 
 func (l *rmListener) Close() error {

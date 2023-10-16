@@ -5,16 +5,11 @@ import (
 	"net"
 )
 
-var _ net.Listener = (*serverBlockedListener)(nil)
+var _ net.Listener = (*blockedServerListener)(nil)
 
-// serverBlockedListener uses a yamux.Session to implement the net.Listener interface
-// with one addition: it requires the client to "knock" first. We can't control
-// order in which the gRPC servers will call Accept() on our multiplexed listener,
-// but we do need to control which gRPC server accepts which connection, so we
-// use a blocked listener and a knock from the client to select the gRPC server
-// we dial to. The selection is based on the gRPC broker's connection ID, and is
-// handled one layer higher in the client and server muxer structs.
-type serverBlockedListener struct {
+// blockedServerListener accepts connections for a specific gRPC broker stream
+// ID on the server (plugin) side of the connection.
+type blockedServerListener struct {
 	addr     net.Addr
 	acceptCh chan acceptResult
 	doneCh   <-chan struct{}
@@ -25,15 +20,15 @@ type acceptResult struct {
 	err  error
 }
 
-func newBlockedServerListener(addr net.Addr, doneCh <-chan struct{}) *serverBlockedListener {
-	return &serverBlockedListener{
+func newBlockedServerListener(addr net.Addr, doneCh <-chan struct{}) *blockedServerListener {
+	return &blockedServerListener{
 		addr:     addr,
 		acceptCh: make(chan acceptResult),
 		doneCh:   doneCh,
 	}
 }
 
-func (b serverBlockedListener) Accept() (net.Conn, error) {
+func (b *blockedServerListener) Accept() (net.Conn, error) {
 	select {
 	case accept := <-b.acceptCh:
 		return accept.conn, accept.err
@@ -42,10 +37,10 @@ func (b serverBlockedListener) Accept() (net.Conn, error) {
 	}
 }
 
-func (b serverBlockedListener) Addr() net.Addr {
+func (b *blockedServerListener) Addr() net.Addr {
 	return b.addr
 }
 
-func (b serverBlockedListener) Close() error {
+func (b *blockedServerListener) Close() error {
 	return nil
 }

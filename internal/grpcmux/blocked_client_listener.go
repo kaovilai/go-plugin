@@ -1,13 +1,16 @@
 package grpcmux
 
 import (
-	"github.com/hashicorp/yamux"
 	"io"
 	"net"
+
+	"github.com/hashicorp/yamux"
 )
 
 var _ net.Listener = (*blockedClientListener)(nil)
 
+// blockedClientListener accepts connections for a specific gRPC broker stream
+// ID on the client (host) side of the connection.
 type blockedClientListener struct {
 	session *yamux.Session
 	waitCh  chan struct{}
