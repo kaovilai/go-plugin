@@ -95,6 +95,9 @@ func (m *GRPCClientMuxer) KnockAndDial(id uint32, knockFn func(id uint32) error)
 }
 
 func (m *GRPCClientMuxer) AcceptKnock(id uint32) error {
+	m.acceptMutex.Lock()
+	defer m.acceptMutex.Unlock()
+
 	ln, ok := m.acceptListeners[id]
 	if !ok {
 		return fmt.Errorf("no listener for id %d", id)

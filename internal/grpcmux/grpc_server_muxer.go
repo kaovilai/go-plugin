@@ -22,7 +22,9 @@ type GRPCServerMuxer struct {
 	sessionErrCh chan error
 	sess         *yamux.Session
 
-	knockCh        chan uint32
+	knockCh chan uint32
+
+	acceptMutex    sync.Mutex
 	acceptChannels map[uint32]chan acceptResult
 
 	dialMutex sync.Mutex
@@ -96,7 +98,10 @@ func (m *GRPCServerMuxer) Accept() (net.Conn, error) {
 
 		select {
 		case id := <-m.knockCh:
+			m.acceptMutex.Lock()
 			acceptCh, ok := m.acceptChannels[id]
+			m.acceptMutex.Unlock()
+
 			if !ok {
 				if conn != nil {
 					_ = conn.Close()
@@ -146,7 +151,10 @@ func (m *GRPCServerMuxer) Listener(id uint32, listenForKnocksFn func(context.Con
 		}
 	}()
 	ln := newBlockedServerListener(ctx, cancel, sess.Addr())
+	m.acceptMutex.Lock()
 	m.acceptChannels[id] = ln.acceptCh
+	m.acceptMutex.Unlock()
+
 	return ln, nil
 }
 

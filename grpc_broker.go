@@ -482,9 +482,6 @@ func (b *GRPCBroker) muxDial(id uint32) func(string, time.Duration) (net.Conn, e
 
 // Dial opens a connection by ID.
 func (b *GRPCBroker) Dial(id uint32) (conn *grpc.ClientConn, err error) {
-	log.Printf("dialling gRPC broker stream ID: %d\n", id)
-
-	// Muxed connection.
 	if b.multiplex {
 		return dialGRPCConn(b.tls, b.muxDial(id))
 	}
