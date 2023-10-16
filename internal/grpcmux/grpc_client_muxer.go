@@ -28,8 +28,6 @@ type GRPCClientMuxer struct {
 
 	acceptMutex     sync.Mutex
 	acceptListeners map[uint32]*blockedClientListener
-
-	dialMutex sync.Mutex
 }
 
 func NewGRPCClientMuxer(logger hclog.Logger, addr net.Addr) (*GRPCClientMuxer, error) {
@@ -63,24 +61,11 @@ func NewGRPCClientMuxer(logger hclog.Logger, addr net.Addr) (*GRPCClientMuxer, e
 	return m, nil
 }
 
-func (m *GRPCClientMuxer) MainDial() (net.Conn, error) {
-	m.dialMutex.Lock()
-	defer m.dialMutex.Unlock()
-
-	return m.session.Open()
-}
-
 func (m *GRPCClientMuxer) Enabled() bool {
 	return m != nil
 }
 
-func (m *GRPCClientMuxer) Listener(id uint32, listenForKnocksFn func(uint32) error, doneCh <-chan struct{}) (net.Listener, error) {
-	go func() {
-		err := listenForKnocksFn(id)
-		if err != nil {
-			m.logger.Error("error listening for knocks", "id", id, "error", err)
-		}
-	}()
+func (m *GRPCClientMuxer) Listener(id uint32, doneCh <-chan struct{}) (net.Listener, error) {
 	ln := newBlockedClientListener(m.session, doneCh)
 
 	m.acceptMutex.Lock()
@@ -88,24 +73,6 @@ func (m *GRPCClientMuxer) Listener(id uint32, listenForKnocksFn func(uint32) err
 	m.acceptMutex.Unlock()
 
 	return ln, nil
-}
-
-func (m *GRPCClientMuxer) KnockAndDial(id uint32, knockFn func(id uint32) error) (net.Conn, error) {
-	m.dialMutex.Lock()
-	defer m.dialMutex.Unlock()
-
-	// Tell the client the gRPC broker ID it should map the next stream to.
-	err := knockFn(id)
-	if err != nil {
-		return nil, fmt.Errorf("failed to knock before dialling client: %w", err)
-	}
-
-	conn, err := m.session.Open()
-	if err != nil {
-		return nil, fmt.Errorf("error dialling new stream: %w", err)
-	}
-
-	return conn, nil
 }
 
 func (m *GRPCClientMuxer) AcceptKnock(id uint32) error {
@@ -118,6 +85,15 @@ func (m *GRPCClientMuxer) AcceptKnock(id uint32) error {
 	}
 	ln.unblock()
 	return nil
+}
+
+func (m *GRPCClientMuxer) Dial() (net.Conn, error) {
+	stream, err := m.session.Open()
+	if err != nil {
+		return nil, fmt.Errorf("error dialling new client stream: %w", err)
+	}
+
+	return stream, nil
 }
 
 func (m *GRPCClientMuxer) Close() error {

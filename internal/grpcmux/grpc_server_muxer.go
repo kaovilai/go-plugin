@@ -40,8 +40,6 @@ type GRPCServerMuxer struct {
 
 	acceptMutex    sync.Mutex
 	acceptChannels map[uint32]chan acceptResult
-
-	dialMutex sync.Mutex
 }
 
 func NewGRPCServerMuxer(logger hclog.Logger, ln net.Listener) *GRPCServerMuxer {
@@ -154,18 +152,12 @@ func (m *GRPCServerMuxer) Enabled() bool {
 	return m != nil
 }
 
-func (m *GRPCServerMuxer) Listener(id uint32, listenForKnocksFn func(uint32) error, doneCh <-chan struct{}) (net.Listener, error) {
+func (m *GRPCServerMuxer) Listener(id uint32, doneCh <-chan struct{}) (net.Listener, error) {
 	sess, err := m.session()
 	if err != nil {
 		return nil, err
 	}
 
-	go func() {
-		err := listenForKnocksFn(id)
-		if err != nil {
-			m.logger.Error("error listening for knocks", "id", id, "error", err)
-		}
-	}()
 	ln := newBlockedServerListener(sess.Addr(), doneCh)
 	m.acceptMutex.Lock()
 	m.acceptChannels[id] = ln.acceptCh
@@ -174,24 +166,15 @@ func (m *GRPCServerMuxer) Listener(id uint32, listenForKnocksFn func(uint32) err
 	return ln, nil
 }
 
-func (m *GRPCServerMuxer) KnockAndDial(id uint32, knockFn func(id uint32) error) (net.Conn, error) {
+func (m *GRPCServerMuxer) Dial() (net.Conn, error) {
 	sess, err := m.session()
 	if err != nil {
 		return nil, err
 	}
 
-	m.dialMutex.Lock()
-	defer m.dialMutex.Unlock()
-
-	// Tell the client the gRPC broker ID it should map the next stream to.
-	err = knockFn(id)
-	if err != nil {
-		return nil, fmt.Errorf("failed to knock before dialling client: %w", err)
-	}
-
 	stream, err := sess.OpenStream()
 	if err != nil {
-		return nil, fmt.Errorf("error dialling new stream: %w", err)
+		return nil, fmt.Errorf("error dialling new server stream: %w", err)
 	}
 
 	return stream, nil

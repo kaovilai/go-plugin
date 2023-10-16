@@ -276,6 +276,8 @@ type GRPCBroker struct {
 	unixSocketCfg  UnixSocketConfig
 	addrTranslator runner.AddrTranslator
 
+	dialMutex sync.Mutex
+
 	muxer grpcmux.GRPCMuxer
 
 	sync.Mutex
@@ -308,7 +310,14 @@ func newGRPCBroker(s streamer, tls *tls.Config, unixSocketCfg UnixSocketConfig, 
 func (b *GRPCBroker) Accept(id uint32) (net.Listener, error) {
 	if b.muxer.Enabled() {
 		p := b.getServerStream(id)
-		ln, err := b.muxer.Listener(id, b.listenForKnocks, p.doneCh)
+		go func() {
+			err := b.listenForKnocks(id)
+			if err != nil {
+				log.Printf("[ERR]: error listening for knocks, id: %d, error: %s", id, err)
+			}
+		}()
+
+		ln, err := b.muxer.Listener(id, p.doneCh)
 		if err != nil {
 			return nil, err
 		}
@@ -495,7 +504,16 @@ func (b *GRPCBroker) knock(id uint32) error {
 
 func (b *GRPCBroker) muxDial(id uint32) func(string, time.Duration) (net.Conn, error) {
 	return func(string, time.Duration) (net.Conn, error) {
-		conn, err := b.muxer.KnockAndDial(id, b.knock)
+		b.dialMutex.Lock()
+		defer b.dialMutex.Unlock()
+
+		// Tell the client the listener ID it should give the next stream to.
+		err := b.knock(id)
+		if err != nil {
+			return nil, fmt.Errorf("failed to knock before dialling client: %w", err)
+		}
+
+		conn, err := b.muxer.Dial()
 		if err != nil {
 			return nil, err
 		}

@@ -1107,7 +1107,7 @@ func (c *Client) dialer(_ string, timeout time.Duration) (net.Conn, error) {
 
 	var conn net.Conn
 	if muxer.Enabled() {
-		conn, err = muxer.MainDial()
+		conn, err = muxer.Dial()
 		if err != nil {
 			return nil, err
 		}
