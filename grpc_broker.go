@@ -274,8 +274,7 @@ type GRPCBroker struct {
 	unixSocketCfg  UnixSocketConfig
 	addrTranslator runner.AddrTranslator
 
-	multiplex bool
-	muxer     grpcmux.GRPCMuxer
+	muxer grpcmux.GRPCMuxer
 
 	sync.Mutex
 }
@@ -296,7 +295,6 @@ func newGRPCBroker(s streamer, tls *tls.Config, unixSocketCfg UnixSocketConfig, 
 		unixSocketCfg:  unixSocketCfg,
 		addrTranslator: addrTranslator,
 		muxer:          muxer,
-		multiplex:      muxer.Enabled(),
 	}
 }
 
@@ -304,7 +302,7 @@ func newGRPCBroker(s streamer, tls *tls.Config, unixSocketCfg UnixSocketConfig, 
 //
 // This should not be called multiple times with the same ID at one time.
 func (b *GRPCBroker) Accept(id uint32) (net.Listener, error) {
-	if b.multiplex {
+	if b.muxer.Enabled() {
 		ln, err := b.muxer.Listener(id, b.listenForKnocks)
 		if err != nil {
 			return nil, err
@@ -363,26 +361,28 @@ func (b *GRPCBroker) AcceptAndServe(id uint32, newGRPCServer func([]grpc.ServerO
 	// Here we use a run group to close this goroutine if the server is shutdown
 	// or the broker is shutdown.
 	var g run.Group
-
-	// Serve on the listener, if shutting down call GracefulStop.
-	g.Add(func() error {
-		return server.Serve(ln)
-	}, func(err error) {
-		server.GracefulStop()
-	})
-
-	// block on the closeCh or the doneCh. If we are shutting down close the
-	// closeCh.
-	closeCh := make(chan struct{})
-	g.Add(func() error {
-		select {
-		case <-b.doneCh:
-		case <-closeCh:
-		}
-		return nil
-	}, func(err error) {
-		close(closeCh)
-	})
+	{
+		// Serve on the listener, if shutting down call GracefulStop.
+		g.Add(func() error {
+			return server.Serve(ln)
+		}, func(err error) {
+			server.GracefulStop()
+		})
+	}
+	{
+		// block on the closeCh or the doneCh. If we are shutting down close the
+		// closeCh.
+		closeCh := make(chan struct{})
+		g.Add(func() error {
+			select {
+			case <-b.doneCh:
+			case <-closeCh:
+			}
+			return nil
+		}, func(err error) {
+			close(closeCh)
+		})
+	}
 
 	// Block until we are done
 	g.Run()
@@ -482,7 +482,7 @@ func (b *GRPCBroker) muxDial(id uint32) func(string, time.Duration) (net.Conn, e
 
 // Dial opens a connection by ID.
 func (b *GRPCBroker) Dial(id uint32) (conn *grpc.ClientConn, err error) {
-	if b.multiplex {
+	if b.muxer.Enabled() {
 		return dialGRPCConn(b.tls, b.muxDial(id))
 	}
 
