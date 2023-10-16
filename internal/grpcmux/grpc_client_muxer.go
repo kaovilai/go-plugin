@@ -1,7 +1,6 @@
 package grpcmux
 
 import (
-	"context"
 	"fmt"
 	"github.com/hashicorp/go-hclog"
 	"github.com/hashicorp/yamux"
@@ -59,15 +58,14 @@ func (m *GRPCClientMuxer) Enabled() bool {
 	return m != nil
 }
 
-func (m *GRPCClientMuxer) Listener(id uint32, listenForKnocksFn func(context.Context, uint32) error) (net.Listener, error) {
-	ctx, cancel := context.WithCancel(context.Background())
+func (m *GRPCClientMuxer) Listener(id uint32, listenForKnocksFn func(uint32) error, doneCh <-chan struct{}) (net.Listener, error) {
 	go func() {
-		err := listenForKnocksFn(ctx, id)
+		err := listenForKnocksFn(id)
 		if err != nil {
 			m.logger.Error("error listening for knocks", "id", id, "error", err)
 		}
 	}()
-	ln := newBlockedClientListener(ctx, cancel, m.session)
+	ln := newBlockedClientListener(m.session, doneCh)
 
 	m.acceptMutex.Lock()
 	m.acceptListeners[id] = ln

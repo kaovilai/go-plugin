@@ -1,7 +1,6 @@
 package grpcmux
 
 import (
-	"context"
 	"io"
 	"net"
 )
@@ -18,8 +17,7 @@ var _ net.Listener = (*serverBlockedListener)(nil)
 type serverBlockedListener struct {
 	addr     net.Addr
 	acceptCh chan acceptResult
-	doneCtx  context.Context
-	cancel   func()
+	doneCh   <-chan struct{}
 }
 
 type acceptResult struct {
@@ -27,12 +25,11 @@ type acceptResult struct {
 	err  error
 }
 
-func newBlockedServerListener(ctx context.Context, cancel func(), addr net.Addr) *serverBlockedListener {
+func newBlockedServerListener(addr net.Addr, doneCh <-chan struct{}) *serverBlockedListener {
 	return &serverBlockedListener{
 		addr:     addr,
 		acceptCh: make(chan acceptResult),
-		doneCtx:  ctx,
-		cancel:   cancel,
+		doneCh:   doneCh,
 	}
 }
 
@@ -40,7 +37,7 @@ func (b serverBlockedListener) Accept() (net.Conn, error) {
 	select {
 	case accept := <-b.acceptCh:
 		return accept.conn, accept.err
-	case <-b.doneCtx.Done():
+	case <-b.doneCh:
 		return nil, io.EOF
 	}
 }
@@ -50,6 +47,5 @@ func (b serverBlockedListener) Addr() net.Addr {
 }
 
 func (b serverBlockedListener) Close() error {
-	b.cancel()
 	return nil
 }

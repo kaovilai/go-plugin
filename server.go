@@ -596,7 +596,9 @@ func serverListener_unix(unixSocketCfg UnixSocketConfig) (net.Listener, error) {
 	// is removed on close.
 	return &rmListener{
 		Listener: l,
-		Path:     path,
+		close: func() error {
+			return os.Remove(path)
+		},
 	}, nil
 }
 
@@ -627,11 +629,12 @@ func setGroupWritable(path, groupString string, mode os.FileMode) error {
 }
 
 // rmListener is an implementation of net.Listener that forwards most
-// calls to the listener but also removes a file as part of the close. We
-// use this to cleanup the unix domain socket on close.
+// calls to the listener but also calls an additional close function. We
+// use this to cleanup the unix domain socket on close, as well as clean
+// up multplexed listeners.
 type rmListener struct {
 	net.Listener
-	Path string
+	close func() error
 }
 
 func (l *rmListener) Close() error {
@@ -641,5 +644,5 @@ func (l *rmListener) Close() error {
 	}
 
 	// Remove the file
-	return os.Remove(l.Path)
+	return l.close()
 }

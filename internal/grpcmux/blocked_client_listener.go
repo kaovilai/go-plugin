@@ -1,7 +1,6 @@
 package grpcmux
 
 import (
-	"context"
 	"github.com/hashicorp/yamux"
 	"io"
 	"net"
@@ -12,16 +11,14 @@ var _ net.Listener = (*blockedClientListener)(nil)
 type blockedClientListener struct {
 	session *yamux.Session
 	waitCh  chan struct{}
-	doneCtx context.Context
-	cancel  func()
+	doneCh  <-chan struct{}
 }
 
-func newBlockedClientListener(ctx context.Context, cancel func(), session *yamux.Session) *blockedClientListener {
+func newBlockedClientListener(session *yamux.Session, doneCh <-chan struct{}) *blockedClientListener {
 	return &blockedClientListener{
 		waitCh:  make(chan struct{}, 1),
+		doneCh:  doneCh,
 		session: session,
-		doneCtx: ctx,
-		cancel:  cancel,
 	}
 }
 
@@ -29,7 +26,7 @@ func (b *blockedClientListener) Accept() (net.Conn, error) {
 	select {
 	case <-b.waitCh:
 		return b.session.Accept()
-	case <-b.doneCtx.Done():
+	case <-b.doneCh:
 		return nil, io.EOF
 	}
 }
@@ -39,7 +36,6 @@ func (b *blockedClientListener) Addr() net.Addr {
 }
 
 func (b *blockedClientListener) Close() error {
-	b.cancel()
 	// We don't close the session, the client muxer is responsible for that.
 	return nil
 }

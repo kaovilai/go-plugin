@@ -1,7 +1,6 @@
 package grpcmux
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"net"
@@ -137,20 +136,19 @@ func (m *GRPCServerMuxer) Enabled() bool {
 	return m != nil
 }
 
-func (m *GRPCServerMuxer) Listener(id uint32, listenForKnocksFn func(context.Context, uint32) error) (net.Listener, error) {
+func (m *GRPCServerMuxer) Listener(id uint32, listenForKnocksFn func(uint32) error, doneCh <-chan struct{}) (net.Listener, error) {
 	sess, err := m.session()
 	if err != nil {
 		return nil, err
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
 	go func() {
-		err := listenForKnocksFn(ctx, id)
+		err := listenForKnocksFn(id)
 		if err != nil {
 			m.logger.Error("error listening for knocks", "id", id, "error", err)
 		}
 	}()
-	ln := newBlockedServerListener(ctx, cancel, sess.Addr())
+	ln := newBlockedServerListener(sess.Addr(), doneCh)
 	m.acceptMutex.Lock()
 	m.acceptChannels[id] = ln.acceptCh
 	m.acceptMutex.Unlock()
